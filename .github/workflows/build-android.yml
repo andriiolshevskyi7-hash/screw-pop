@@ -290,6 +290,17 @@ jobs:
           "$AAPT2" dump permissions "$APK" | grep -q "$AD_ID_PERM" || fail "В маніфесті APK немає дозволу $AD_ID_PERM"
           echo "OK: дозвіл $AD_ID_PERM є в AAB і APK."
 
+      # Пакет рівнів (levels/pack.json, не ресурс Godot — включається через include_filter):
+      # без нього гра генерувала б рівні на телефоні (повільно).
+      - name: Verify level pack is packaged (APK and AAB)
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          DBG="build/${APK_NAME}-${VERSION_NAME}-debug.apk"
+          AAB="build/${APK_NAME}-release.aab"
+          unzip -Z1 "$DBG" | grep 'levels/pack.json' || fail "У debug-APK немає levels/pack.json"
+          unzip -Z1 "$AAB" | grep 'levels/pack.json' || fail "В AAB немає levels/pack.json"
+          echo "OK: пакет рівнів є в APK і AAB."
+
       # Debug-меню: є в debug-APK і фізично відсутнє в AAB для Google Play
       # (scripts/debug/* виключено в пресеті «Android AAB»).
       - name: Verify debug menu (debug APK only, never in AAB)
