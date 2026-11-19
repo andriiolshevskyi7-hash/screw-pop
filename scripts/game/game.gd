@@ -561,10 +561,12 @@ func _show_mechanic_intro() -> void:
 		var targets := _mechanic_targets(id)
 		if targets.is_empty():
 			continue
+		var gen := _gen
 		_tutorial.spotlight(targets, tr(m.text))
 		Sfx.play("select")
 		await _tutorial.dismissed
-		if not debug_play:
+		# Закрите виходом чи рестартом (а не торканням) знайомство не зараховується.
+		if gen == _gen and not debug_play:
 			GameState.mark_tutorial_done(id)
 		return
 

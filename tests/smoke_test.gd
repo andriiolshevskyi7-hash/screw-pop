@@ -57,6 +57,7 @@ func _run() -> void:
 		_check(win.visible, "рівень %d пройдено через натискання" % lvl)
 		win.hide()
 	# Механіки: на рівні відкриття — знайомство (підсвітка + речення), рівень проходиться.
+	gs.tutorials_done = ["tap", "buffer"]
 	for m in Mechanics.LIST:
 		var lvl: int = m.from
 		game.start_level(lvl)
