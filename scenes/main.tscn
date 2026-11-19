@@ -1,0 +1,42 @@
+[gd_scene load_steps=7 format=3]
+
+[ext_resource type="Script" path="res://scripts/ui/main.gd" id="1_main"]
+[ext_resource type="Script" path="res://scripts/ui/background.gd" id="2_bg"]
+[ext_resource type="PackedScene" path="res://scenes/ui/menu.tscn" id="3_menu"]
+[ext_resource type="PackedScene" path="res://scenes/game/game.tscn" id="4_game"]
+[ext_resource type="PackedScene" path="res://scenes/ui/win_screen.tscn" id="5_win"]
+[ext_resource type="PackedScene" path="res://scenes/ui/settings_popup.tscn" id="7_settings"]
+
+[node name="Main" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_main")
+
+[node name="Background" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+script = ExtResource("2_bg")
+
+[node name="Menu" parent="." instance=ExtResource("3_menu")]
+layout_mode = 1
+
+[node name="Game" parent="." instance=ExtResource("4_game")]
+visible = false
+layout_mode = 1
+
+[node name="WinScreen" parent="." instance=ExtResource("5_win")]
+visible = false
+layout_mode = 1
+
+[node name="SettingsPopup" parent="." instance=ExtResource("7_settings")]
+visible = false
+layout_mode = 1

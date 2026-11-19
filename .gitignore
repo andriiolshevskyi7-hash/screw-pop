@@ -1,0 +1,15 @@
+.godot/
+build/
+*.apk
+*.aab
+*.tmp
+translations/*.translation
+# Gradle-шаблон Android ставиться в CI
+android/
+# Ключі підпису ніколи не комітимо
+*.keystore
+*.jks
+*.p12
+keystore*.txt
+.gradle-home/
+__pycache__/

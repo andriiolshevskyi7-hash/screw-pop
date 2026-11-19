@@ -1,0 +1,27 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+ <g transform="translate(128 128) scale(0.68) translate(-128 -128)"><g transform="rotate(-28 128 128)">
+  <rect x="34" y="102" width="188" height="56" rx="28" fill="#1a3b6a" opacity="0.18" transform="translate(0 9)"/>
+  <rect x="34" y="102" width="188" height="56" rx="28" fill="#c9a8ff"/>
+  <rect x="34" y="102" width="188" height="56" rx="28" fill="#dccfff"/>
+  <rect x="44" y="108" width="168" height="18" rx="9" fill="#ffffff" opacity="0.45"/>
+  <rect x="34" y="102" width="188" height="56" rx="28" fill="none" stroke="#ffffff" stroke-opacity="0.8" stroke-width="3"/>
+  <circle cx="190" cy="130" r="17" fill="#0d2a4a" opacity="0.4"/>
+ </g>
+ <g>
+  <circle cx="98" cy="152" r="50" fill="#0a1e3c" opacity="0.25"/>
+  <circle cx="92" cy="142" r="48" fill="#b02a2c"/>
+  <circle cx="92" cy="138" r="42" fill="#f93e40"/>
+  <ellipse cx="92" cy="120" rx="29" ry="15" fill="#ff8d8e" opacity="0.8"/>
+  <ellipse cx="74" cy="117" rx="8" ry="4" fill="#ffffff" opacity="0.85" transform="rotate(-35 74 117)"/>
+  <g transform="rotate(20 92 140)" stroke="#6e1213" stroke-width="10" stroke-linecap="round">
+   <line x1="70" y1="140" x2="114" y2="140"/><line x1="92" y1="118" x2="92" y2="162"/>
+  </g>
+  <circle cx="178" cy="84" r="27" fill="#1a6fd0"/>
+  <circle cx="178" cy="82" r="23" fill="#3e8eff"/>
+  <ellipse cx="178" cy="72" rx="15" ry="8" fill="#9cc6ff" opacity="0.8"/>
+  <g transform="rotate(-15 178 82)" stroke="#123f80" stroke-width="6" stroke-linecap="round">
+   <line x1="166" y1="82" x2="190" y2="82"/><line x1="178" y1="70" x2="178" y2="94"/>
+  </g>
+  <path d="M150 52 l8 -14 M168 44 l2 -16 M136 64 l-12 -10" stroke="#ffffff" stroke-width="6" stroke-linecap="round" opacity="0.9"/>
+ </g></g>
+</svg>

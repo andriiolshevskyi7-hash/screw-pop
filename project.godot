@@ -1,0 +1,54 @@
+; Engine configuration file.
+
+config_version=5
+
+[application]
+
+config/name="Screw Pop"
+config/description="Головоломка «відкрути гвинти»"
+run/main_scene="res://alderwood_splash_main.tscn"
+config/features=PackedStringArray("4.3", "GL Compatibility")
+config/icon="res://icon.svg"
+config/quit_on_go_back=false
+run/max_fps=60
+run/low_processor_mode=true
+boot_splash/show_image=false
+boot_splash/bg_color=Color(1, 0.823529, 0.247059, 1)
+
+[autoload]
+
+GameState="*res://scripts/autoload/game_state.gd"
+AdManager="*res://scripts/autoload/ad_manager.gd"
+Sfx="*res://scripts/autoload/sfx.gd"
+
+[editor_plugins]
+
+enabled=PackedStringArray("res://addons/admob_export/plugin.cfg")
+
+[display]
+
+window/size/viewport_width=720
+window/size/viewport_height=1280
+window/size/window_width_override=405
+window/size/window_height_override=720
+window/stretch/mode="canvas_items"
+window/stretch/aspect="expand"
+window/handheld/orientation=1
+
+[input_devices]
+
+pointing/emulate_touch_from_mouse=true
+pointing/emulate_mouse_from_touch=true
+
+[internationalization]
+
+locale/translations=PackedStringArray("res://translations/strings.en.translation", "res://translations/strings.uk.translation", "res://translations/strings.de.translation", "res://translations/strings.fr.translation", "res://translations/strings.es.translation", "res://translations/strings.pt.translation", "res://translations/strings.it.translation", "res://translations/strings.pl.translation", "res://translations/strings.tr.translation", "res://translations/strings.ru.translation", "res://translations/strings.id.translation", "res://translations/strings.ja.translation", "res://translations/strings.ko.translation", "res://translations/strings.zh.translation", "res://translations/strings.ar.translation", "res://translations/strings.hi.translation", "res://translations/strings.cs.translation")
+locale/include_text_server_data=true
+locale/fallback="en"
+
+[rendering]
+
+textures/vram_compression/import_etc2_astc=true
+renderer/rendering_method="gl_compatibility"
+renderer/rendering_method.mobile="gl_compatibility"
+environment/defaults/default_clear_color=Color(0.137, 0.788, 0.784, 1)

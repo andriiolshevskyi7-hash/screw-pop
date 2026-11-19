@@ -1,0 +1,368 @@
+name: Build Android AAB + debug APK
+
+on:
+  push:
+    branches: ["**"]
+  workflow_dispatch:
+
+env:
+  GODOT_VERSION: "4.3"
+  APK_NAME: ScrewPop
+  # Назва пакета, зареєстрована в Google Play Console (має збігатися точно).
+  EXPECTED_PACKAGE: com.alderwood.screwpop
+  # versionCode = номер запуску Actions + зсув. Номер запуску спільний для всіх
+  # гілок цього workflow і з кожною збіркою лише зростає, тож versionCode теж.
+  # Зсув потрібен, лише якщо workflow колись перейменують (лічильник почнеться з 1):
+  # тоді поставте зсув, більший за останній завантажений versionCode.
+  VERSION_CODE_OFFSET: "0"
+  # Найбільший versionCode, що вже міг бути завантажений у Play Console.
+  # Гра ще не завантажувалась — 0. CI перевіряє, що нова збірка має більший versionCode.
+  # Після завантаження збірки в Play Console це число можна підняти.
+  PLAY_LAST_VERSION_CODE: "0"
+  # versionName = база + номер запуску, наприклад 0.1.5. База росте з кожним етапом розробки.
+  VERSION_NAME_BASE: "0.1"
+  # Шаблон Gradle Godot 4.3 розрахований на SDK 34; Google Play вимагає
+  # target SDK 36 (з 31.08.2026), тому оновлюємо інструменти збірки.
+  ANDROID_COMPILE_SDK: "36"
+  ANDROID_BUILD_TOOLS: "36.0.0"
+  AGP_VERSION: "8.10.1"
+  GRADLE_VERSION: "8.11.1"
+  KOTLIN_VERSION: "2.0.21"
+  # Кеш Gradle у робочій папці (з .gdignore, щоб Godot його не сканував).
+  GRADLE_USER_HOME: .gradle-home
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    container:
+      image: barichello/godot-ci:4.3
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Check Godot project
+        run: |
+          test -f project.godot || { echo "::error::project.godot not found"; exit 1; }
+          grep -q 'name="Android AAB"' export_presets.cfg || { echo "::error::No 'Android AAB' preset"; exit 1; }
+
+      - name: Set versionCode and versionName
+        run: |
+          VC=$(( ${{ github.run_number }} + VERSION_CODE_OFFSET ))
+          VN="${VERSION_NAME_BASE}.${{ github.run_number }}"
+          sed -i "s/^version\/code=.*/version\/code=$VC/; s/^version\/name=.*/version\/name=\"$VN\"/" export_presets.cfg
+          echo "versionCode=$VC versionName=$VN"
+          echo "VERSION_CODE=$VC" >> "$GITHUB_ENV"
+          echo "VERSION_NAME=$VN" >> "$GITHUB_ENV"
+
+      - name: Create debug keystore
+        run: |
+          keytool -keyalg RSA -genkeypair -alias androiddebugkey -keypass android \
+            -keystore ~/debug.keystore -storepass android \
+            -dname "CN=Android Debug,O=Android,C=US" -validity 9999 -deststoretype pkcs12
+
+      - name: Find or download export templates
+        run: |
+          DEST=~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          mkdir -p "$DEST"
+          T=$(find / -name android_source.zip -not -path '/proc/*' 2>/dev/null | head -1)
+          echo "found: $T"
+          if [ -n "$T" ]; then
+            [ "$(dirname "$T")" = "$DEST" ] || cp -r "$(dirname "$T")"/. "$DEST"/
+          else
+            wget -q https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_export_templates.tpz -O /tmp/t.zip
+            unzip -q /tmp/t.zip -d /tmp/t
+            cp -r /tmp/t/templates/. "$DEST"/
+          fi
+          ls "$DEST" | head -30
+
+      - name: Install Android SDK parts
+        run: |
+          SDK_DIR=${ANDROID_HOME:-/usr/lib/android-sdk}
+          SM=$(find / -name sdkmanager -type f -not -path '/proc/*' 2>/dev/null | head -1)
+          echo "sdkmanager: $SM  sdk: $SDK_DIR"
+          yes | "$SM" --sdk_root="$SDK_DIR" --licenses > /dev/null || true
+          "$SM" --sdk_root="$SDK_DIR" "platform-tools" "build-tools;${ANDROID_BUILD_TOOLS}" "platforms;android-${ANDROID_COMPILE_SDK}"
+          ls "$SDK_DIR/build-tools" "$SDK_DIR/platforms"
+
+      - name: Install and patch the Android Gradle build template
+        run: |
+          T=~/.local/share/godot/export_templates/${GODOT_VERSION}.stable
+          rm -rf android && mkdir -p android/build
+          unzip -q "$T/android_source.zip" -d android/build
+          printf "%s" "${GODOT_VERSION}.stable" > android/.build_version
+          touch android/build/.gdignore
+          cd android/build
+          sed -i -E \
+            -e "s/(androidGradlePlugin[[:space:]]*:[[:space:]]*)'[^']*'/\1'${AGP_VERSION}'/" \
+            -e "s/(compileSdk[[:space:]]*:[[:space:]]*)[0-9]+/\1${ANDROID_COMPILE_SDK}/" \
+            -e "s/(targetSdk[[:space:]]*:[[:space:]]*)[0-9]+/\1${ANDROID_COMPILE_SDK}/" \
+            -e "s/(buildTools[[:space:]]*:[[:space:]]*)'[^']*'/\1'${ANDROID_BUILD_TOOLS}'/" \
+            -e "s/(kotlinVersion[[:space:]]*:[[:space:]]*)'[^']*'/\1'${KOTLIN_VERSION}'/" \
+            config.gradle
+          sed -i -E "s#gradle-[0-9.]+-bin.zip#gradle-${GRADLE_VERSION}-bin.zip#" gradle/wrapper/gradle-wrapper.properties
+          # Опції, які новий AGP не підтримує, прибираємо.
+          sed -i '/android.enableResourceOptimizations/d' gradle.properties || true
+          echo "android.suppressUnsupportedCompileSdk=${ANDROID_COMPILE_SDK}" >> gradle.properties
+          grep -nE "androidGradlePlugin|compileSdk|targetSdk|buildTools|kotlinVersion" config.gradle
+          cat gradle/wrapper/gradle-wrapper.properties | grep distributionUrl
+          # Вертикальна орієнтація (screenOrientation="portrait") змушує Google Play вважати
+          # android.hardware.screen.portrait ОБОВ'ЯЗКОВОЮ функцією й відсіювати пристрої.
+          # Явно позначаємо її необов'язковою; сама орієнтація гри лишається вертикальною.
+          # Godot пише в src/release|debug лише накладку маніфесту, тож рядок в основному
+          # маніфесті шаблону зберігається й зливається в підсумковий.
+          FEATURE='<uses-feature android:name="android.hardware.screen.portrait" android:required="false" />'
+          grep -q 'android.hardware.screen.portrait' AndroidManifest.xml || \
+            sed -i "0,/<application/s##${FEATURE}\n\n    <application#" AndroidManifest.xml
+          grep -n -B3 -A1 'screen.portrait' AndroidManifest.xml || { echo "::error::Не вдалося додати uses-feature screen.portrait у шаблон"; exit 1; }
+
+      - name: Cache Gradle
+        uses: actions/cache@v5
+        with:
+          path: |
+            .gradle-home/caches
+            .gradle-home/wrapper
+          key: gradle-${{ env.GRADLE_VERSION }}-agp-${{ env.AGP_VERSION }}-${{ hashFiles('addons/admob_export/export_plugin.gd') }}
+          restore-keys: gradle-${{ env.GRADLE_VERSION }}-agp-${{ env.AGP_VERSION }}-
+
+      - name: Import resources
+        run: |
+          mkdir -p .gradle-home && touch .gradle-home/.gdignore
+          export GRADLE_USER_HOME="$PWD/.gradle-home"
+          godot --headless --import || true
+
+      - name: Level generator test (levels 1-60 solvable)
+        run: godot --headless --script res://tests/generator_test.gd -- 1 60
+
+      - name: Smoke test (play through levels by taps)
+        run: godot --headless --script res://tests/smoke_test.gd
+
+      # Енергоспоживання: у спокої жодних покадрових оновлень (див. tests/idle_redraw.gd).
+      - name: Idle redraw test (no per-frame work when nothing moves)
+        run: godot --headless --script res://tests/idle_redraw.gd
+
+      - name: Configure editor settings (SDK, JDK, debug keystore)
+        run: |
+          SDK_DIR=${ANDROID_HOME:-/usr/lib/android-sdk}
+          JAVA_DIR=$(dirname $(dirname $(readlink -f $(which java))))
+          S=~/.config/godot/editor_settings-${GODOT_VERSION}.tres
+          rm -f "$S"
+          godot --headless -e --quit || true
+          {
+            echo "export/android/android_sdk_path = \"$SDK_DIR\""
+            echo "export/android/java_sdk_path = \"$JAVA_DIR\""
+            echo "export/android/debug_keystore = \"$HOME/debug.keystore\""
+            echo 'export/android/debug_keystore_user = "androiddebugkey"'
+            echo 'export/android/debug_keystore_pass = "android"'
+          } >> "$S"
+          tail -6 "$S"
+
+      # Debug-APK для тестування на телефоні: debug-збірка (OS.is_debug_build() = true),
+      # тож у ній є debug-меню (рівні, монети, скидання навчань). Підписана debug-ключем,
+      # тестова реклама. Лише для встановлення вручну — не для Google Play.
+      - name: Export debug APK (with debug menu)
+        run: |
+          mkdir -p build
+          export GRADLE_USER_HOME="$PWD/.gradle-home"
+          godot --headless --export-debug "Android" "build/${APK_NAME}-${VERSION_NAME}-debug.apk"
+          ls -la build
+          test -f "build/${APK_NAME}-${VERSION_NAME}-debug.apk"
+
+      # Ключ підпису береться ЛИШЕ із секретів репозиторію. Якщо секретів ще
+      # немає, AAB збирається з тимчасовим ключем тільки для перевірки збірки
+      # і НЕ викладається (інакше його можна випадково завантажити в Play).
+      - name: Export signed release AAB
+        env:
+          KEYSTORE_BASE64: ${{ secrets.KEYSTORE_BASE64 }}
+          KEYSTORE_PASSWORD: ${{ secrets.KEYSTORE_PASSWORD }}
+          KEY_ALIAS: ${{ secrets.KEY_ALIAS }}
+          KEY_PASSWORD: ${{ secrets.KEY_PASSWORD }}
+        run: |
+          KS="$RUNNER_TEMP/upload.keystore"
+          if [ -n "$KEYSTORE_BASE64" ]; then
+            # Копіювання з телефона часто додає пробіли й переноси рядків:
+            # прибираємо їх (у base64 — усі, у паролях і alias — лише по краях).
+            # Значення секретів у журнал не потрапляють, лише так/ні та розміри.
+            trim() { printf '%s' "$1" | tr -d '\r\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//'; }
+            changed() { [ "$1" != "$2" ] && echo "так" || echo "ні"; }
+            echo "Пробіли/переноси прибрано: KEYSTORE_PASSWORD — $(changed "$KEYSTORE_PASSWORD" "$(trim "$KEYSTORE_PASSWORD")"), KEY_PASSWORD — $(changed "$KEY_PASSWORD" "$(trim "$KEY_PASSWORD")"), KEY_ALIAS — $(changed "$KEY_ALIAS" "$(trim "$KEY_ALIAS")")"
+            KEYSTORE_PASSWORD=$(trim "$KEYSTORE_PASSWORD")
+            KEY_PASSWORD=$(trim "$KEY_PASSWORD")
+            KEY_ALIAS=$(trim "$KEY_ALIAS")
+            if ! printf '%s' "$KEYSTORE_BASE64" | tr -d '[:space:]' | base64 -d > "$KS" 2>/dev/null; then
+              echo "::error::KEYSTORE_BASE64 — некоректний base64 (обрізаний або вставлено не той текст). Вставте весь вміст upload-keystore.base64.txt."
+              exit 1
+            fi
+            echo "Розкодований ключ: $(wc -c < "$KS") байт, SHA-256 $(sha256sum "$KS" | cut -c1-16)…"
+            if [ -n "$KEY_PASSWORD" ] && [ "$KEY_PASSWORD" != "$KEYSTORE_PASSWORD" ]; then
+              echo "::error::Godot підписує AAB одним паролем: KEY_PASSWORD має дорівнювати KEYSTORE_PASSWORD."
+              exit 1
+            fi
+            # Та сама перевірка, що робить Godot, але з точною причиною.
+            if ! OUT=$(keytool -list -keystore "$KS" -storepass "$KEYSTORE_PASSWORD" 2>&1); then
+              if echo "$OUT" | grep -qi "password was incorrect\|password verification failed\|keystore password"; then
+                echo "::error::KEYSTORE_PASSWORD не підходить до ключа з KEYSTORE_BASE64. Перевставте пароль із secrets.txt (без лапок і пробілів)."
+              else
+                echo "::error::KEYSTORE_BASE64 розкодовано, але це не дійсний keystore (файл пошкоджений або обрізаний). Перевставте весь вміст upload-keystore.base64.txt."
+              fi
+              exit 1
+            fi
+            if ! keytool -list -keystore "$KS" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" > /dev/null 2>&1; then
+              echo "::error::KEY_ALIAS не знайдено в ключі. Alias у цьому ключі: $(echo "$OUT" | grep -i 'PrivateKeyEntry' | cut -d, -f1 | tr '\n' ' ')"
+              exit 1
+            fi
+            echo "Ключ, пароль і alias підходять одне до одного."
+            echo "SIGNED_WITH_UPLOAD_KEY=true" >> "$GITHUB_ENV"
+            # Відбиток сертифіката upload-ключа (публічний) — для перевірки підпису AAB.
+            UPLOAD_SHA256=$(keytool -list -v -keystore "$KS" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" 2>/dev/null | sed -n 's/^[[:space:]]*SHA256:[[:space:]]*//p' | head -1)
+            echo "Відбиток upload-ключа: SHA-256 $UPLOAD_SHA256"
+            echo "UPLOAD_CERT_SHA256=$UPLOAD_SHA256" >> "$GITHUB_ENV"
+          else
+            echo "::warning::Секрети KEYSTORE_* не задані: AAB зібрано тимчасовим ключем лише для перевірки і НЕ викладено."
+            KEYSTORE_PASSWORD="temporary-$RANDOM$RANDOM"
+            KEY_ALIAS="temporary"
+            keytool -genkeypair -keyalg RSA -keysize 2048 -validity 1 -alias "$KEY_ALIAS" \
+              -keystore "$KS" -storepass "$KEYSTORE_PASSWORD" -keypass "$KEYSTORE_PASSWORD" \
+              -dname "CN=Temporary CI key" -deststoretype pkcs12
+          fi
+          export GRADLE_USER_HOME="$PWD/.gradle-home"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PATH="$KS"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_USER="$KEY_ALIAS"
+          export GODOT_ANDROID_KEYSTORE_RELEASE_PASSWORD="$KEYSTORE_PASSWORD"
+          godot --headless --export-release "Android AAB" "build/${APK_NAME}-release.aab"
+          rm -f "$KS"
+          ls -la build
+          test -f "build/${APK_NAME}-release.aab"
+
+      - name: Verify AAB contents (package, versions, SDK)
+        run: |
+          AAB="build/${APK_NAME}-release.aab"
+          unzip -l "$AAB" | grep -E "base/manifest/AndroidManifest.xml|base/lib/" | head
+          SDK_DIR=${ANDROID_HOME:-/usr/lib/android-sdk}
+          AAPT2=$(ls "$SDK_DIR"/build-tools/*/aapt2 | tail -1)
+          # APK для перевірок — debug-APK (той самий пакет і маніфест, тестова реклама).
+          APK="build/${APK_NAME}-${VERSION_NAME}-debug.apk"
+          "$AAPT2" dump badging "$APK" | grep -E "package:|sdkVersion|targetSdkVersion" || true
+          "$AAPT2" dump xmltree --file AndroidManifest.xml "$APK" | grep -E "APPLICATION_ID|ca-app-pub" || true
+          "$SDK_DIR/build-tools/${ANDROID_BUILD_TOOLS}/apksigner" verify --print-certs "$APK" | head -3 || true
+          fail() { echo "::error::$1"; exit 1; }
+          # Пакет: APK — з aapt2, AAB — з маніфесту (protobuf, рядки в UTF-8).
+          APK_PKG=$("$AAPT2" dump badging "$APK" | sed -n "s/^package: name='\([^']*\)'.*/\1/p")
+          AAB_PKGS=$(unzip -p "$AAB" base/manifest/AndroidManifest.xml | tr -c '[:alnum:]._' '\n' | grep -E '^[a-z][a-z0-9_]*(\.[a-z0-9_]+)+$' | sort -u)
+          echo "APK: пакет $APK_PKG"
+          echo "AAB: пакет $(echo "$AAB_PKGS" | grep -x "$EXPECTED_PACKAGE" || echo '—')"
+          [ "$APK_PKG" = "$EXPECTED_PACKAGE" ] || fail "APK має пакет '$APK_PKG', очікується $EXPECTED_PACKAGE"
+          echo "$AAB_PKGS" | grep -qx "$EXPECTED_PACKAGE" || fail "В AAB немає пакета $EXPECTED_PACKAGE"
+          # Підпис AAB: сертифікат має збігатися з upload-ключем із секретів.
+          AAB_SHA256=$(keytool -printcert -jarfile "$AAB" 2>/dev/null | sed -n 's/^[[:space:]]*SHA256:[[:space:]]*//p' | head -1)
+          echo "AAB підписано сертифікатом SHA-256 ${AAB_SHA256:-—}"
+          if [ "$SIGNED_WITH_UPLOAD_KEY" = "true" ]; then
+            [ -n "$AAB_SHA256" ] && [ "$AAB_SHA256" = "$UPLOAD_CERT_SHA256" ] || fail "AAB підписано не upload-ключем із секретів"
+            echo "OK: AAB підписано upload-ключем із секретів."
+          fi
+          echo "OK: пакет $EXPECTED_PACKAGE в APK і AAB."
+          # Google Play вимагає дозвіл AD_ID для застосунків з рекламою (Android 13+).
+          AD_ID_PERM="com.google.android.gms.permission.AD_ID"
+          echo "Дозволи APK:"; "$AAPT2" dump permissions "$APK" | sed 's/^/  /'
+          unzip -p "$AAB" base/manifest/AndroidManifest.xml | tr -d '\000' | grep -a -q "$AD_ID_PERM" || fail "В маніфесті AAB немає дозволу $AD_ID_PERM"
+          "$AAPT2" dump permissions "$APK" | grep -q "$AD_ID_PERM" || fail "В маніфесті APK немає дозволу $AD_ID_PERM"
+          echo "OK: дозвіл $AD_ID_PERM є в AAB і APK."
+
+      # Debug-меню: є в debug-APK і фізично відсутнє в AAB для Google Play
+      # (scripts/debug/* виключено в пресеті «Android AAB»).
+      - name: Verify debug menu (debug APK only, never in AAB)
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          DBG="build/${APK_NAME}-${VERSION_NAME}-debug.apk"
+          AAB="build/${APK_NAME}-release.aab"
+          echo "debug APK:"; unzip -Z1 "$DBG" | grep 'scripts/debug/' || true
+          echo "AAB:"; unzip -Z1 "$AAB" | grep 'scripts/debug/' || true
+          unzip -Z1 "$DBG" | grep -q 'scripts/debug/debug_menu' || fail "У debug-APK немає debug-меню"
+          if unzip -Z1 "$AAB" | grep -q 'scripts/debug/'; then fail "У AAB для Google Play є debug-меню"; fi
+          echo "OK: debug-меню лише в debug-APK."
+
+      # Debug-APK — лише тестова реклама Google; AAB для Play — справжня,
+      # але поки в ad_config.gd FORCE_TEST_ADS = true (закрите тестування) — теж тестова.
+      - name: Verify ad IDs (debug APK = test, AAB = real unless FORCE_TEST_ADS)
+        run: |
+          TEST_APP="ca-app-pub-3940256099942544~3347511713"
+          REAL_APP=$(sed -n 's/^const REAL_APP_ID := "\(.*\)"/\1/p' scripts/core/ad_config.gd)
+          FORCE_TEST=$(sed -n 's/^const FORCE_TEST_ADS := \(true\|false\).*/\1/p' scripts/core/ad_config.gd)
+          [ -n "$FORCE_TEST" ] || { echo "::error::Не вдалося прочитати FORCE_TEST_ADS з ad_config.gd"; exit 1; }
+          echo "FORCE_TEST_ADS=$FORCE_TEST"
+          APK="build/${APK_NAME}-${VERSION_NAME}-debug.apk"
+          AAB="build/${APK_NAME}-release.aab"
+          fail() { echo "::error::$1"; exit 1; }
+          # tr прибирає нульові байти, тож grep бачить рядки і з UTF-16 (APK), і з UTF-8 (AAB).
+          APK_APP=$(unzip -p "$APK" AndroidManifest.xml | tr -d '\000' | grep -a -o 'ca-app-pub-[0-9~]*' | head -1)
+          AAB_APP=$(unzip -p "$AAB" base/manifest/AndroidManifest.xml | tr -d '\000' | grep -a -o 'ca-app-pub-[0-9~]*' | head -1)
+          # Шлях до ad_mode.txt залежить від формату (в AAB ресурси лежать в asset pack).
+          mode_of() { P=$(unzip -Z1 "$1" | grep 'assets/ad_mode.txt$' | head -1); [ -n "$P" ] && echo "$P: $(unzip -p "$1" "$P")" >&2 && unzip -p "$1" "$P"; }
+          APK_MODE=$(mode_of "$APK" || true)
+          AAB_MODE=$(mode_of "$AAB" || true)
+          echo "APK: App ID $APK_APP, ad_mode=$APK_MODE"
+          echo "AAB: App ID $AAB_APP, ad_mode=$AAB_MODE"
+          [ "$APK_APP" = "$TEST_APP" ] || fail "APK має містити ТЕСТОВИЙ App ID"
+          [ "$APK_MODE" = "test" ] || fail "APK має містити ad_mode=test"
+          if [ "$FORCE_TEST" = "true" ]; then
+            echo "::warning::FORCE_TEST_ADS = true: AAB зібрано з ТЕСТОВОЮ рекламою (закрите тестування). Перед публічним релізом поверніть false."
+            [ "$AAB_APP" = "$TEST_APP" ] || fail "FORCE_TEST_ADS = true, але AAB містить не тестовий App ID"
+            [ "$AAB_MODE" = "test" ] || fail "FORCE_TEST_ADS = true, але AAB містить ad_mode=$AAB_MODE"
+            echo "OK: APK і AAB — тестова реклама (FORCE_TEST_ADS)."
+          else
+            [ "$AAB_APP" = "$REAL_APP" ] || fail "AAB має містити СПРАВЖНІЙ App ID"
+            [ "$AAB_MODE" = "real" ] || fail "AAB має містити ad_mode=real"
+            echo "OK: APK — тестова реклама, AAB — справжня."
+          fi
+
+      # versionCode у самому AAB (через bundletool): дорівнює номеру збірки
+      # і більший за останній завантажений у Play Console.
+      - name: Verify versionCode and manifest features in AAB
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          wget -q https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar -O /tmp/bundletool.jar
+          AAB="build/${APK_NAME}-release.aab"
+          AAB_VC=$(java -jar /tmp/bundletool.jar dump manifest --bundle "$AAB" --xpath /manifest/@android:versionCode)
+          AAB_VN=$(java -jar /tmp/bundletool.jar dump manifest --bundle "$AAB" --xpath /manifest/@android:versionName)
+          echo "AAB: versionCode=$AAB_VC versionName=$AAB_VN (очікується $VERSION_CODE / $VERSION_NAME)"
+          [ "$AAB_VC" = "$VERSION_CODE" ] || fail "versionCode в AAB ($AAB_VC) не збігається з номером збірки ($VERSION_CODE)"
+          [ "$AAB_VN" = "$VERSION_NAME" ] || fail "versionName в AAB ($AAB_VN) не $VERSION_NAME"
+          [ "$AAB_VC" -gt "$PLAY_LAST_VERSION_CODE" ] || fail "versionCode $AAB_VC не більший за останній у Play Console ($PLAY_LAST_VERSION_CODE)"
+          echo "OK: versionCode $AAB_VC > $PLAY_LAST_VERSION_CODE (останній завантажений)."
+          # Вертикальна орієнтація лишається, але screen.portrait — необов'язкова функція.
+          PORTRAIT_REQ=$(java -jar /tmp/bundletool.jar dump manifest --bundle "$AAB" \
+            --xpath "/manifest/uses-feature[@android:name='android.hardware.screen.portrait']/@android:required")
+          ORIENT=$(java -jar /tmp/bundletool.jar dump manifest --bundle "$AAB" \
+            --xpath "/manifest/application/activity[intent-filter/action/@android:name='android.intent.action.MAIN']/@android:screenOrientation")
+          echo "AAB: uses-feature android.hardware.screen.portrait required=$PORTRAIT_REQ, screenOrientation=$ORIENT"
+          [ "$PORTRAIT_REQ" = "false" ] || fail "У маніфесті AAB android.hardware.screen.portrait не має required=false (є: '$PORTRAIT_REQ')"
+          case "$ORIENT" in 1|portrait) ;; *) fail "Орієнтація гри має бути вертикальною (portrait), а в AAB: '$ORIENT'" ;; esac
+          echo "OK: screen.portrait required=false, орієнтація вертикальна."
+          echo "### AAB для Google Play: versionCode **$AAB_VC**, versionName **$AAB_VN**, screen.portrait required=**$PORTRAIT_REQ**, screenOrientation=**$ORIENT**" >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ env.APK_NAME }}-debug-apk-v${{ env.VERSION_NAME }}
+          path: build/${{ env.APK_NAME }}-${{ env.VERSION_NAME }}-debug.apk
+          if-no-files-found: error
+          retention-days: 3
+
+      # Графіка для сторінки в Google Play (зі store/, рендер з гри — див. store/README.md).
+      # Лише при ручному запуску (Run workflow), щоб не займати сховище на кожен push.
+      - uses: actions/upload-artifact@v6
+        if: github.event_name == 'workflow_dispatch'
+        with:
+          name: ${{ env.APK_NAME }}-store-graphics-v${{ env.VERSION_NAME }}
+          path: |
+            store/feature_graphic_1024x500.png
+            store/icon_512.png
+            store/screenshots/*/*.png
+            store/listing/*.txt
+          if-no-files-found: error
+          retention-days: 7
+
+      - uses: actions/upload-artifact@v6
+        if: env.SIGNED_WITH_UPLOAD_KEY == 'true'
+        with:
+          name: ${{ env.APK_NAME }}-release-aab-v${{ env.VERSION_NAME }}
+          path: build/*.aab
+          if-no-files-found: error
+          retention-days: 7

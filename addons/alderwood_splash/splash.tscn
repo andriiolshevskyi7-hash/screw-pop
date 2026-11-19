@@ -1,0 +1,53 @@
+[gd_scene load_steps=3 format=3]
+
+[ext_resource type="Script" path="res://addons/alderwood_splash/splash.gd" id="1_script"]
+[ext_resource type="Texture2D" path="res://addons/alderwood_splash/leaf.svg" id="2_leaf"]
+
+[node name="AlderwoodSplash" type="Control"]
+layout_mode = 3
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+script = ExtResource("1_script")
+
+[node name="Background" type="ColorRect" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+color = Color(1, 0.823529, 0.247059, 1)
+
+[node name="Content" type="Control" parent="."]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="Wordmark" type="Control" parent="Content"]
+layout_mode = 1
+anchors_preset = 15
+anchor_right = 1.0
+anchor_bottom = 1.0
+grow_horizontal = 2
+grow_vertical = 2
+mouse_filter = 2
+
+[node name="LeafAnchor" type="Control" parent="Content"]
+layout_mode = 0
+mouse_filter = 2
+
+[node name="Leaf" type="TextureRect" parent="Content/LeafAnchor"]
+texture_filter = 2
+layout_mode = 0
+mouse_filter = 2
+texture = ExtResource("2_leaf")
+expand_mode = 1
+stretch_mode = 5

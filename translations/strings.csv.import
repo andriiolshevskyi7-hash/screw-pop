@@ -1,0 +1,17 @@
+[remap]
+
+importer="csv_translation"
+type="Translation"
+uid="uid://cpxyb87p46px7"
+
+[deps]
+
+files=["res://translations/strings.en.translation", "res://translations/strings.uk.translation", "res://translations/strings.de.translation", "res://translations/strings.fr.translation", "res://translations/strings.es.translation", "res://translations/strings.pt.translation", "res://translations/strings.it.translation", "res://translations/strings.pl.translation", "res://translations/strings.tr.translation", "res://translations/strings.ru.translation", "res://translations/strings.id.translation", "res://translations/strings.ja.translation", "res://translations/strings.ko.translation", "res://translations/strings.zh.translation", "res://translations/strings.ar.translation", "res://translations/strings.hi.translation", "res://translations/strings.cs.translation"]
+
+source_file="res://translations/strings.csv"
+dest_files=["res://translations/strings.en.translation", "res://translations/strings.uk.translation", "res://translations/strings.de.translation", "res://translations/strings.fr.translation", "res://translations/strings.es.translation", "res://translations/strings.pt.translation", "res://translations/strings.it.translation", "res://translations/strings.pl.translation", "res://translations/strings.tr.translation", "res://translations/strings.ru.translation", "res://translations/strings.id.translation", "res://translations/strings.ja.translation", "res://translations/strings.ko.translation", "res://translations/strings.zh.translation", "res://translations/strings.ar.translation", "res://translations/strings.hi.translation", "res://translations/strings.cs.translation"]
+
+[params]
+
+compress=true
+delimiter=0
