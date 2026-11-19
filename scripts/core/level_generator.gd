@@ -140,25 +140,30 @@ static func generate(level: int, seed_value: int) -> Dictionary:
 	return best
 
 
-## Скільки різних розв'язків «сліпої» моделі перевіряти для кожної механіки.
-const BLIND_TRIES := 3
+## Скільки прогонів «сліпого» розв'язувача (модель без механіки) перевіряти.
+const BLIND_TRIES := 6
 const SOLVE_BUDGET := 8000
 const BLIND_BUDGET := 4000
 
 
-## Чи кожну з механік `ids` не можна проігнорувати: розв'язки моделі без неї
-## (кілька, з різним порядком перебору) за справжніми правилами не проходять рівень.
-## Розв'язок шукається з повним буфером — найсильніший «сліпий» гравець.
-static func mechanics_matter(board: ScrewBoard, ids: Array, rng: RandomNumberGenerator) -> bool:
+## Чи кожну з механік `ids` не можна проігнорувати: розв'язувач, що не враховує механіку
+## (модель без неї), шукає розв'язок BLIND_TRIES разів з різним порядком перебору
+## (перший — звичайний, далі — з фіксованими сідами, тож перевірка детермінована);
+## кожен знайдений розв'язок програється за справжніми правилами. Якщо хоч один
+## проходить рівень — механіку можна проігнорувати, і рівень відкидається.
+## (Точна перевірка «не існує жодної такої послідовності» — Solver.solve_both — для
+## буфера на 5 місць майже завжди знаходить щасливий порядок, тож лишена для діагностики.)
+static func mechanics_matter(board: ScrewBoard, ids: Array, _rng: RandomNumberGenerator = null) -> bool:
 	for id in ids:
-		if not _blind_solutions(board, {id: true}, rng).all(func(m) -> bool: return not Solver.replay(board, m)):
-			return false
+		for m in _blind_solutions(board, {id: true}):
+			if Solver.replay(board, m):
+				return false
 	return true
 
 
 ## Розв'язки «сліпої» моделі (без механік із `blind`). Порожній список — сліпа модель
 ## нерозв'язна (отже, проігнорувати механіки точно не вийде).
-static func _blind_solutions(board: ScrewBoard, blind: Dictionary, rng: RandomNumberGenerator) -> Array:
+static func _blind_solutions(board: ScrewBoard, blind: Dictionary) -> Array:
 	var b := board.clone()
 	b.blind = blind
 	b.reset()
@@ -166,7 +171,8 @@ static func _blind_solutions(board: ScrewBoard, blind: Dictionary, rng: RandomNu
 	for i in BLIND_TRIES:
 		var solver := Solver.new()
 		if i > 0:
-			solver.rng = rng
+			solver.rng = RandomNumberGenerator.new()
+			solver.rng.seed = 7919 * i
 		var res := solver.solve(b, BLIND_BUDGET)
 		if res.ok:
 			out.append(res.moves)
@@ -453,7 +459,7 @@ static func _place_bombs(rng: RandomNumberGenerator, board: ScrewBoard, count: i
 				cands.append(s)
 		_shuffle(rng, cands)
 		var placed := false
-		var blind := _blind_solutions(board, {"bomb": true}, rng)
+		var blind := _blind_solutions(board, {"bomb": true})
 		if blind.is_empty():
 			return {"ok": false}
 		for s in cands.slice(0, 6):

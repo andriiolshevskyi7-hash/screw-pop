@@ -41,6 +41,50 @@ static func min_buffer(board: ScrewBoard, max_cap: int = ScrewBoard.BUFFER_SIZE,
 	return -1
 
 
+## Чи існує послідовність ходів, що виграє одночасно на двох полях (`a` — «сліпа»
+## модель без механіки, `b` — справжні правила). Ходи однакові для обох, стан — пара.
+## Так генератор перевіряє, що механіку не можна проігнорувати: гравець, який грає так,
+## ніби механіки немає, не може виграти жодним способом.
+## Повертає {"ok": bool, "aborted": bool, "moves": PackedInt32Array}.
+func solve_both(a: ScrewBoard, b: ScrewBoard, budget: int) -> Dictionary:
+	max_nodes = budget
+	nodes = 0
+	aborted = false
+	_seen = {}
+	_moves = PackedInt32Array()
+	var ok := _dfs_both(a.clone(), b.clone())
+	return {"ok": ok, "aborted": aborted, "moves": _moves.duplicate() if ok else PackedInt32Array()}
+
+
+func _dfs_both(a: ScrewBoard, b: ScrewBoard) -> bool:
+	if a.is_won() and b.is_won():
+		return true
+	if a.exploded or b.exploded:
+		return false
+	var key := a.state_key() + "#" + b.state_key()
+	if _seen.has(key):
+		return false
+	_seen[key] = true
+	nodes += 1
+	if nodes > max_nodes:
+		aborted = true
+		return false
+	for s in _ordered_candidates(a):
+		if not b.can_tap(s):
+			continue
+		var ca := a.clone()
+		var cb := b.clone()
+		ca.tap(s)
+		cb.tap(s)
+		_moves.append(s)
+		if _dfs_both(ca, cb):
+			return true
+		_moves.resize(_moves.size() - 1)
+		if aborted:
+			break
+	return false
+
+
 ## Програє ходи за правилами поля: чи привели вони до перемоги.
 static func replay(board: ScrewBoard, moves: PackedInt32Array) -> bool:
 	var b := board.clone()

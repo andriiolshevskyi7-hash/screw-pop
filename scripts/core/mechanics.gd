@@ -29,7 +29,7 @@ const RELIEF_LEVELS := 8
 
 ## Кількість на рівні знайомства / зростання (рівнів на +1) / межа до поєднань / межа в поєднаннях.
 const AMOUNTS := {
-	SWING: {"intro": 1, "every": 12, "max": 2, "combo_max": 3},
+	SWING: {"intro": 1, "every": 1000, "max": 1, "combo_max": 2},
 	CHAMELEON: {"intro": 1, "every": 15, "max": 2, "combo_max": 3},
 	BOMB: {"intro": 1, "every": 25, "max": 2, "combo_max": 2},
 	SAFE: {"intro": 1, "every": 1000, "max": 1, "combo_max": 1},
