@@ -30,8 +30,8 @@ const RELIEF_LEVELS := 8
 ## Кількість на рівні знайомства / зростання (рівнів на +1) / межа до поєднань / межа в поєднаннях.
 const AMOUNTS := {
 	SWING: {"intro": 1, "every": 1000, "max": 1, "combo_max": 2},
-	CHAMELEON: {"intro": 1, "every": 15, "max": 2, "combo_max": 3},
-	BOMB: {"intro": 1, "every": 25, "max": 2, "combo_max": 2},
+	CHAMELEON: {"intro": 1, "every": 15, "max": 2, "combo_max": 2},
+	BOMB: {"intro": 1, "every": 1000, "max": 1, "combo_max": 1},
 	SAFE: {"intro": 1, "every": 1000, "max": 1, "combo_max": 1},
 }
 
@@ -87,16 +87,17 @@ static func amount(id: String, level: int) -> int:
 	if combo:
 		n = mini(int(a.combo_max), n + (level - combo_from()) / 40)
 	var li := latest_intro(level)
-	if li.id != id:
+	if li.id != id and li.since >= 0 and li.since <= RELIEF_LEVELS:
 		# Інша механіка щойно відкрилась: на її рівні знайомства цієї немає,
 		# далі вона повертається по 1 за 2 рівні.
-		if li.since >= 0 and li.since <= RELIEF_LEVELS:
-			n = mini(n, li.since / 2)
-		# До поєднань старі механіки трапляються приблизно на половині рівнів.
-		elif not combo and _roll(id, level) < 0.5:
+		n = mini(n, li.since / 2)
+	elif combo:
+		# У поєднаннях кожна механіка трапляється приблизно на половині рівнів.
+		if _roll(id, level) < 0.45:
 			n = 0
-		elif combo and _roll(id, level) < 0.25:
-			n = 0
+	elif li.id != id and _roll(id, level) < 0.5:
+		# До поєднань старі механіки — приблизно на половині рівнів.
+		n = 0
 	return n
 
 
@@ -115,4 +116,13 @@ static func for_level(level: int) -> Dictionary:
 		var n := amount(m.id, level)
 		if n > 0:
 			out[m.id] = n
+	# У поєднаннях — щонайменше дві механіки.
+	if level >= combo_from() and out.size() < 2:
+		var ranked := LIST.map(func(m) -> Array: return [_roll(m.id, level), m.id])
+		ranked.sort_custom(func(a, b) -> bool: return a[0] > b[0])
+		for r in ranked:
+			if out.size() >= 2:
+				break
+			if not out.has(r[1]):
+				out[r[1]] = 1
 	return out

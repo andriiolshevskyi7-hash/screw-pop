@@ -212,9 +212,11 @@ func _request_generation(p_level: int, seed_value: int) -> void:
 	_gen_tasks[key] = WorkerThreadPool.add_task(_generate_job.bind(key, p_level, seed_value), false, "level %d" % p_level)
 
 
-## Працює у фоновому потоці: лише чиста логіка (ScrewBoard, Solver), без вузлів сцени.
+## Працює у фоновому потоці: лише чиста логіка, без вузлів сцени. Рівні беруться з
+## заздалегідь згенерованого пакета (LevelPack); генератор — лише якщо пакета немає.
 func _generate_job(key: String, p_level: int, seed_value: int) -> void:
-	var g := LevelGenerator.generate(p_level, seed_value)
+	var packed := LevelPack.level(p_level)
+	var g := {"board": packed.board, "params": {"mech": packed.mech}} if not packed.is_empty() else LevelGenerator.generate(p_level, seed_value)
 	_deliver_generated.call_deferred(key, g)
 
 

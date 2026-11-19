@@ -170,9 +170,15 @@ func _settle() -> void:
 ## Грає розв'язок солвера натисканнями. `fast` — не чекати кінця анімацій між ходами
 ## (лише поки ввід не заблоковано), як гравець, що швидко тапає.
 func _solve_level(fast: bool = false) -> void:
-	var res := Solver.new().solve(game.board, 30000)
-	_check(res.ok, "рівень %d розв'язний" % game.level)
-	for s in res.moves:
+	# Рівень з пакета — його збережений розв'язок (інакше — розв'язувач).
+	var moves := PackedInt32Array()
+	var packed := LevelPack.level(game.level)
+	if not packed.is_empty() and game.board.screws_left() == game.board.screw_count():
+		moves = packed.solution
+	else:
+		moves = Solver.new().solve(game.board, 30000).moves
+	_check(Solver.replay(game.board, moves), "рівень %d розв'язний" % game.level)
+	for s in moves:
 		var guard := 0
 		while game.is_input_locked() and guard < 600:
 			guard += 1
@@ -189,9 +195,11 @@ func _solve_level(fast: bool = false) -> void:
 ## хардкодимо номер — інакше тест ламався б з кожною зміною генератора.
 func _losing_level() -> int:
 	for lvl in range(15, 120):
-		var g := LevelGenerator.generate(lvl, LevelGenerator.seed_for_level(lvl))
-		var b := ScrewBoard.from_dict(g.board)
-		while not b.is_won() and not b.is_stuck():
+		var packed := LevelPack.level(lvl)
+		var b := ScrewBoard.from_dict(packed.board if not packed.is_empty() else LevelGenerator.generate(lvl, LevelGenerator.seed_for_level(lvl)).board)
+		if b.bomb_n.size() > 0 and Array(b.bomb_n).max() > 0:
+			continue  # без бомб: тут перевіряється саме лоток
+		while not b.is_won() and not b.is_lost():
 			var pick := -1
 			var any := -1
 			for s in b.screw_count():

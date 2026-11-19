@@ -129,8 +129,18 @@ jobs:
           export GRADLE_USER_HOME="$PWD/.gradle-home"
           godot --headless --import || true
 
-      - name: Level generator test (levels 1-130 solvable, mechanics)
-        run: godot --headless --script res://tests/generator_test.gd -- 1 130
+      # Рівні постачаються готовим пакетом (levels/pack.json): кожен проходиться збереженим
+      # розв'язком, механіки — як задумано, для частини — що їх не можна проігнорувати.
+      - name: Level pack test (all packed levels win, mechanics matter)
+        run: godot --headless --script res://tests/pack_test.gd
+
+      # Регресія генератора: легкі рівні й рівні знайомства з механіками.
+      - name: Level generator test (levels 1-25, mechanic intros)
+        run: |
+          godot --headless --script res://tests/generator_test.gd -- 1 25
+          godot --headless --script res://tests/generator_test.gd -- 45 45
+          godot --headless --script res://tests/generator_test.gd -- 70 70
+          godot --headless --script res://tests/generator_test.gd -- 95 95
 
       - name: Smoke test (play through levels by taps)
         run: godot --headless --script res://tests/smoke_test.gd
