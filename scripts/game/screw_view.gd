@@ -11,6 +11,13 @@ var radius := ScrewBoard.SCREW_R
 ## Поворот шліца (відкручування крутить його).
 var spin := 0.0
 var lift := 0.0
+## Механіки: замок (пара — для кольору замка/ключа), ключ, прихований колір.
+var locked := false
+var lock_pair := -1
+var key_pair := -1
+var masked := false
+var _open := 0.0
+var _flip := 1.0
 var _shake_t := -1.0
 var _shake_dir := Vector2.RIGHT
 var _tween: Tween
@@ -26,12 +33,43 @@ func setup(p_index: int, p_color: int, p_radius: float) -> void:
 
 func _draw() -> void:
 	# Компенсуємо поворот пластини: головка й тінь завжди орієнтовані за екраном.
-	draw_set_transform(Vector2.ZERO, -get_parent().rotation, Vector2.ONE)
 	var offset := Vector2.ZERO
 	if _shake_t >= 0.0:
 		offset = _shake_dir * sin(_shake_t * 60.0) * 6.0 * (1.0 - _shake_t / 0.32)
-	ScrewPainter.draw_screw(self, offset, radius, color_index, spin, lift)
+	draw_set_transform(offset, -get_parent().rotation, Vector2(absf(_flip), 1.0))
+	if masked or _flip < 0.0:
+		ScrewPainter.draw_hidden(self, Vector2.ZERO, radius, lift)
+	else:
+		ScrewPainter.draw_screw(self, Vector2.ZERO, radius, color_index, spin, lift)
+		if key_pair >= 0:
+			ScrewPainter.draw_key_badge(self, Vector2.ZERO, radius, ScrewPainter.lock_tint(key_pair))
+	if lock_pair >= 0 and (locked or _open > 0.0):
+		ScrewPainter.draw_padlock(self, Vector2.ZERO, radius, ScrewPainter.lock_tint(lock_pair), _open)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
+
+
+## Замок відкрито: дужка піднімається, замок зникає.
+func unlock() -> void:
+	locked = false
+	var tw := create_tween()
+	tw.tween_method(func(v: float) -> void:
+		_open = v
+		queue_redraw(), 0.0, 1.0, 0.45).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	tw.tween_callback(func() -> void:
+		_open = 0.0
+		lock_pair = -1
+		queue_redraw())
+	pop()
+
+
+## «?» перевертається й показує колір.
+func reveal() -> void:
+	masked = false
+	var tw := create_tween()
+	tw.tween_method(func(v: float) -> void:
+		_flip = v
+		queue_redraw(), -1.0, 1.0, 0.4).set_trans(Tween.TRANS_SINE)
+	pop()
 
 
 ## Легке трясіння: гвинт накритий пластиною, відкрутити не можна.

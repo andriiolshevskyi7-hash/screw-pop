@@ -90,7 +90,7 @@ func _ordered_candidates(b: ScrewBoard) -> Array:
 		var color := b.color_of(s)
 		var p: int = b.screws[s].plate
 		# Однакові за кольором гвинти однієї пластини взаємозамінні — лишаємо один.
-		var dup := "%d:%d" % [p, color]
+		var dup := "%d:%d:%d" % [p, color, s if b.is_key(s) else -1]
 		if seen_colors_plates.has(dup):
 			continue
 		seen_colors_plates[dup] = true

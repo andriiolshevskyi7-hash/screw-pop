@@ -62,12 +62,25 @@ static func params_for_level(level: int) -> Dictionary:
 		p = {
 			"screws": mini(18 + 3 * int(t / 4.0) + (3 if wave > 0.0 else 0), 36),
 			"colors": mini(4 + int(t / 7.0), 8),
-			"mix": clampf(0.45 + t * 0.02 + wave * 0.1, 0.3, 1.2),
+			"mix": clampf(0.65 + t * 0.017 + wave * 0.1, 0.3, 1.2),
 			"cap": 4,
 			"rate": [clampf(lo, 0.15, 0.9), clampf(lo + 0.25, 0.4, 0.97)],
 			"cover": clampf(0.8 + t * 0.008, 0.8, 0.95),
 			"max_cover": mini(4 + int(t / 10.0), 6),
 		}
+	# Механіки й «передих» після їх відкриття (рівні до 20-го не змінюються).
+	p["mech"] = Mechanics.for_level(level)
+	p["intro"] = Mechanics.is_intro_level(level)
+	var k := Mechanics.relief(level)
+	if k > 0.0:
+		p.screws = maxi(12, int(p.screws) - 3 * int(round(k * 2.0)))
+		p.colors = maxi(3, int(p.colors) - int(round(k * 1.5)))
+		p.mix = maxf(0.15, float(p.mix) - 0.25 * k)
+		p.rate = [minf(0.9, float(p.rate[0]) + 0.2 * k), minf(1.0, float(p.rate[1]) + 0.1 * k)]
+	if p.intro:
+		# Рівень знайомства — легкий, щоб гравець зосередився на новій механіці.
+		p.rate = [0.75, 1.0]
+		p.mix = minf(float(p.mix), 0.3)
 	p["level"] = level
 	return p
 
@@ -79,7 +92,8 @@ static func generate(level: int, seed_value: int) -> Dictionary:
 	rng.seed = seed_value
 	var best: Dictionary = {}
 	var best_err := INF
-	for attempt in ATTEMPTS:
+	var attempts := ATTEMPTS * (2 if params.mech.size() > 1 else 1)
+	for attempt in attempts:
 		var board := _build(rng, params)
 		if board == null:
 			continue
@@ -239,9 +253,175 @@ static func _build(rng: RandomNumberGenerator, params: Dictionary) -> ScrewBoard
 	board.screws = screws
 	board.box_queue = PackedInt32Array()
 	board.setup()
-	if not _colorize(rng, board, params):
+	var mech: Dictionary = params.get("mech", {})
+	var intro: bool = params.get("intro", false)
+	if mech.has(Mechanics.GLASS) or mech.has(Mechanics.CHAIN):
+		if not _place_glass(rng, board, int(mech.get(Mechanics.GLASS, 0)), intro):
+			return null
+		if not _place_chains(rng, board, int(mech.get(Mechanics.CHAIN, 0)), intro):
+			return null
+		board.setup()
+	var order := _colorize(rng, board, params)
+	if order.is_empty():
 		return null
+	if mech.has(Mechanics.LOCK):
+		if not _place_locks(rng, board, order, int(mech[Mechanics.LOCK]), intro):
+			return null
+	if mech.has(Mechanics.HIDDEN):
+		if not _place_hidden(rng, board, order, int(mech[Mechanics.HIDDEN]), intro):
+			return null
+	board.setup()
 	return board
+
+
+# --- Механіки ----------------------------------------------------------------
+
+## Чи всі гвинти пластини відкриті на початку (видно, як вона розіб'ється/впаде).
+static func _plate_open(board: ScrewBoard, p: int) -> bool:
+	for s in board.plate_screws[p]:
+		if not board.covers[s].is_empty():
+			return false
+	return true
+
+
+## Скляні пластини: з ≥ 2 гвинтами. На рівні знайомства — відкрита пластина, що щось накриває.
+static func _place_glass(rng: RandomNumberGenerator, board: ScrewBoard, count: int, intro: bool) -> bool:
+	if count <= 0:
+		return true
+	var cands := []
+	for p in board.plates.size():
+		if board.plate_screws[p].size() < 2:
+			continue
+		if intro:
+			var covers_any := false
+			for s in board.screw_count():
+				if board.covers[s].has(p):
+					covers_any = true
+			if not (_plate_open(board, p) and covers_any):
+				continue
+		cands.append(p)
+	if cands.size() < count:
+		return false
+	_shuffle(rng, cands)
+	for i in count:
+		board.plates[cands[i]]["glass"] = true
+	return true
+
+
+## Ланцюги: пари пластин (не скляних), видимий відрізок ланцюга між ними не проходить
+## над жодним гвинтом. На рівні знайомства обидві пластини відкриті.
+static func _place_chains(rng: RandomNumberGenerator, board: ScrewBoard, count: int, intro: bool) -> bool:
+	if count <= 0:
+		return true
+	var used := {}
+	var pairs := []
+	for p in board.plates.size():
+		for q in range(p + 1, board.plates.size()):
+			if board.plates[p].get("glass", false) or board.plates[q].get("glass", false):
+				continue
+			if intro and not (_plate_open(board, p) and _plate_open(board, q)):
+				continue
+			var d: float = (board.plates[p].pos as Vector2).distance_to(board.plates[q].pos)
+			if d < 140.0 or d > 400.0:
+				continue
+			if chain_segment(board.plates[p], board.plates[q]).is_empty():
+				continue
+			if not _chain_clear(board, p, q):
+				continue
+			pairs.append([p, q])
+	_shuffle(rng, pairs)
+	var placed := 0
+	for pair in pairs:
+		if placed >= count:
+			break
+		if used.has(pair[0]) or used.has(pair[1]):
+			continue
+		used[pair[0]] = true
+		used[pair[1]] = true
+		board.plates[pair[0]]["chain"] = pair[1]
+		board.plates[pair[1]]["chain"] = pair[0]
+		placed += 1
+	return placed == count
+
+
+## Видима частина ланцюга між центрами двох пластин — відрізок поза обома пластинами
+## ([] — пластини надто перекриваються).
+static func chain_segment(a: Dictionary, b: Dictionary) -> Array:
+	var pa: Vector2 = a.pos
+	var pb: Vector2 = b.pos
+	var t0 := -1.0
+	var t1 := -1.0
+	for i in 41:
+		var t := i / 40.0
+		var pt := pa.lerp(pb, t)
+		if ScrewBoard.shape_distance(a, pt) > 4.0 and ScrewBoard.shape_distance(b, pt) > 4.0:
+			if t0 < 0.0:
+				t0 = t
+			t1 = t
+	if t0 < 0.0:
+		return []
+	# Ланцюг заходить трохи на пластини (до кріплення).
+	var from := pa.lerp(pb, maxf(0.0, t0 - 0.06))
+	var to := pa.lerp(pb, minf(1.0, t1 + 0.06))
+	if from.distance_to(to) < 50.0:
+		return []
+	return [from, to]
+
+
+static func _chain_clear(board: ScrewBoard, p: int, q: int) -> bool:
+	var seg := chain_segment(board.plates[p], board.plates[q])
+	for s in board.screws:
+		var c := Geometry2D.get_closest_point_to_segment(s.pos, seg[0], seg[1])
+		if c.distance_to(s.pos) < R + 6.0:
+			return false
+	return true
+
+
+## Замки: ключ k відкручується раніше за замкнений гвинт l у знайденому порядку, тож
+## розв'язок лишається дійсним. На рівні знайомства обидва відкриті з самого початку.
+static func _place_locks(rng: RandomNumberGenerator, board: ScrewBoard, order: PackedInt32Array, count: int, intro: bool) -> bool:
+	var pos := {}
+	for i in order.size():
+		pos[order[i]] = i
+	var used := {}
+	var placed := 0
+	for attempt in 200:
+		if placed >= count:
+			break
+		var k := rng.randi() % board.screw_count()
+		var l := rng.randi() % board.screw_count()
+		if k == l or used.has(k) or used.has(l) or pos[k] >= pos[l]:
+			continue
+		if board.screws[k].plate == board.screws[l].plate:
+			continue
+		if intro and (not board.covers[k].is_empty() or not board.covers[l].is_empty()):
+			continue
+		board.screws[l]["lock"] = k
+		used[k] = true
+		used[l] = true
+		placed += 1
+	return placed == count
+
+
+## Приховані гвинти: накриті на початку, без замка й не ключі. На рівні знайомства —
+## ті, що відкриються найраніше (гравець одразу побачить, як «?» показує колір).
+static func _place_hidden(rng: RandomNumberGenerator, board: ScrewBoard, order: PackedInt32Array, count: int, intro: bool) -> bool:
+	var keys := {}
+	for s in board.screw_count():
+		if int(board.screws[s].get("lock", -1)) >= 0:
+			keys[int(board.screws[s].lock)] = true
+	var cands := []
+	for s in order:
+		if board.covers[s].is_empty() or keys.has(s) or int(board.screws[s].get("lock", -1)) >= 0:
+			continue
+		cands.append(s)
+	if cands.size() < count:
+		return false
+	if not intro:
+		_shuffle(rng, cands)
+	for i in count:
+		board.screws[cands[i]]["hidden"] = true
+	return true
 
 
 ## Перевіряє, що гвинти не налазять один на одного, а край нової пластини не «ледь
@@ -259,39 +439,14 @@ static func _fits(plate: Dictionary, holes: Array, plates: Array, screws: Array)
 
 
 ## Розфарбовує гвинти й будує чергу коробок (див. опис класу).
-static func _colorize(rng: RandomNumberGenerator, board: ScrewBoard, params: Dictionary) -> bool:
+## Повертає порядок відкручування, під який підібрано кольори (порожній — не вдалося).
+static func _colorize(rng: RandomNumberGenerator, board: ScrewBoard, params: Dictionary) -> PackedInt32Array:
 	var n := board.screw_count()
 	var boxes := n / 3
-	# Випадковий допустимий порядок відкручування (без урахування кольорів).
-	var order := PackedInt32Array()
-	var gone := PackedByteArray()
-	gone.resize(board.plates.size())
-	var left := PackedInt32Array()
-	for p in board.plates.size():
-		left.append(board.plate_screws[p].size())
-	var removed := PackedByteArray()
-	removed.resize(n)
-	while order.size() < n:
-		var free := []
-		for s in n:
-			if removed[s]:
-				continue
-			var ok := true
-			for q in board.covers[s]:
-				if not gone[q]:
-					ok = false
-					break
-			if ok:
-				free.append(s)
-		if free.is_empty():
-			return false
-		var s: int = free[rng.randi() % free.size()]
-		removed[s] = 1
-		order.append(s)
-		var p: int = board.screws[s].plate
-		left[p] -= 1
-		if left[p] == 0:
-			gone[p] = 1
+	# Випадковий допустимий порядок відкручування за правилами поля (без коробок).
+	var order := _random_order(rng, board)
+	if order.size() < n:
+		return PackedInt32Array()
 	# Кольори коробок: усі кольори по черзі, без двох однакових поспіль.
 	var ncolors := mini(int(params.colors), boxes)
 	var palette := range(ScrewPainter.COLORS.size())
@@ -323,7 +478,27 @@ static func _colorize(rng: RandomNumberGenerator, board: ScrewBoard, params: Dic
 		board.screws[s].color = colors[s]
 	board.box_queue = queue
 	board.reset()
-	return true
+	return order
+
+
+## Випадковий допустимий порядок відкручування: кожен крок — випадковий вільний гвинт
+## (накриття, замки, скло, ланцюги — за правилами ScrewBoard).
+static func _random_order(rng: RandomNumberGenerator, board: ScrewBoard) -> PackedInt32Array:
+	var b := board.clone()
+	b.reset()
+	var order := PackedInt32Array()
+	var ev := []
+	while order.size() < b.screw_count():
+		var free := []
+		for s in b.screw_count():
+			if b.is_free(s):
+				free.append(s)
+		if free.is_empty():
+			return order
+		var s: int = free[rng.randi() % free.size()]
+		b.remove_structural(s, ev)
+		order.append(s)
+	return order
 
 
 static func _shuffle(rng: RandomNumberGenerator, arr: Array) -> void:

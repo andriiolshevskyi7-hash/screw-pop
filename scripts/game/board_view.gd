@@ -15,6 +15,8 @@ var board: ScrewBoard
 var plates_root: Node2D
 var plate_views := {}
 var screw_views := {}
+## Ланцюги: номер пластини → ChainView (обидві пластини пари вказують на той самий).
+var chain_views := {}
 var board_scale := 1.0
 
 
@@ -52,7 +54,47 @@ func build(p_board: ScrewBoard) -> void:
 		sv.setup(s, int(sc.color), ScrewBoard.SCREW_R)
 		plate_views[int(sc.plate)].add_screw(sv, (sc.pos - plate.pos).rotated(-float(plate.rot)))
 		screw_views[s] = sv
+	# Пари «ключ — замок» мають однаковий колір замка й значка ключа.
+	var pair := 0
+	for k in board.screw_count():
+		if board.is_key(k) and not board.removed[k]:
+			screw_views[k].key_pair = pair
+			for l in board.keys_of[k]:
+				if screw_views.has(l):
+					screw_views[l].lock_pair = pair
+			pair += 1
+	for p in board.plates.size():
+		var q := board.chain_of[p]
+		if q > p and not board.plate_gone[p] and not board.plate_gone[q]:
+			var cv := ChainView.new()
+			cv.setup(p, q, LevelGenerator.chain_segment(board.plates[p], board.plates[q]))
+			plates_root.add_child(cv)
+			chain_views[p] = cv
+			chain_views[q] = cv
+	refresh_states(false)
 	_fit()
+
+
+## Оновлює замки й «?» за станом поля (`animate` — з анімацією відкриття).
+## Повертає {"unlocked": n, "revealed": n}.
+func refresh_states(animate: bool = true) -> Dictionary:
+	var out := {"unlocked": 0, "revealed": 0}
+	if board == null:
+		return out
+	for s in screw_views:
+		var sv: ScrewView = screw_views[s]
+		var locked := board.is_locked(s)
+		if sv.locked and not locked and animate:
+			sv.unlock()
+			out.unlocked += 1
+		sv.locked = locked
+		var masked := board.is_hidden(s) and board.is_covered(s)
+		if sv.masked and not masked and animate:
+			sv.reveal()
+			out.revealed += 1
+		sv.masked = masked
+		sv.queue_redraw()
+	return out
 
 
 func queue_redraw_all() -> void:
@@ -65,6 +107,7 @@ func clear() -> void:
 		v.queue_free()
 	plate_views.clear()
 	screw_views.clear()
+	chain_views.clear()
 	board = null
 
 

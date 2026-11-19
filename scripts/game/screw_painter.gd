@@ -176,3 +176,112 @@ static func _poly(c: Vector2, r: float, n: int, start: float) -> PackedVector2Ar
 		var a := start + TAU * k / n
 		pts.append(c + Vector2(cos(a), sin(a)) * r)
 	return pts
+
+
+# --- Механіки ------------------------------------------------------------------
+
+## Кольори пар «ключ — замок» (щоб було видно, який ключ що відмикає).
+const LOCK_TINTS := ["ffc233", "d9dee8", "e0905a", "5fd3a0"]
+
+
+static func lock_tint(pair: int) -> Color:
+	return Color(LOCK_TINTS[pair % LOCK_TINTS.size()])
+
+
+## Навісний замок поверх головки. `open` 0…1 — дужка піднімається, замок зникає.
+static func draw_padlock(ci: CanvasItem, c: Vector2, r: float, tint: Color, open: float = 0.0) -> void:
+	var a := 1.0 - open
+	if a <= 0.0:
+		return
+	var body := Rect2(c + Vector2(-r * 0.62, -r * 0.18 + open * r * 0.6), Vector2(r * 1.24, r * 0.98))
+	var shackle_c := body.position + Vector2(r * 0.62, -open * r * 0.5)
+	ci.draw_arc(shackle_c + Vector2(0, 2), r * 0.4, PI, TAU, 16, Color(0.05, 0.1, 0.2, 0.35 * a), r * 0.2, true)
+	ci.draw_arc(shackle_c, r * 0.4, PI, TAU, 16, Color(tint.darkened(0.35), a), r * 0.2, true)
+	var sb := StyleBoxFlat.new()
+	sb.bg_color = Color(tint, a)
+	sb.set_corner_radius_all(int(r * 0.22))
+	sb.border_width_bottom = int(maxf(2.0, r * 0.12))
+	sb.border_color = Color(tint.darkened(0.3), a)
+	sb.anti_aliasing = true
+	ci.draw_style_box(sb, body)
+	var kc := body.get_center()
+	ci.draw_circle(kc - Vector2(0, r * 0.08), r * 0.14, Color(0.15, 0.1, 0.05, 0.8 * a))
+	ci.draw_line(kc - Vector2(0, r * 0.05), kc + Vector2(0, r * 0.22), Color(0.15, 0.1, 0.05, 0.8 * a), r * 0.1)
+
+
+## Значок ключа на головці гвинта-ключа (у правому верхньому куті).
+static func draw_key_badge(ci: CanvasItem, c: Vector2, r: float, tint: Color) -> void:
+	var o := c + Vector2(r * 0.62, -r * 0.62)
+	ci.draw_circle(o + Vector2(0, 2), r * 0.46, Color(0.05, 0.1, 0.2, 0.3))
+	ci.draw_circle(o, r * 0.46, Color.WHITE)
+	ci.draw_circle(o, r * 0.38, tint)
+	var ink := tint.darkened(0.55)
+	var w := maxf(2.0, r * 0.09)
+	ci.draw_arc(o + Vector2(-r * 0.12, 0), r * 0.12, 0, TAU, 12, ink, w, true)
+	ci.draw_line(o + Vector2(0, 0), o + Vector2(r * 0.24, 0), ink, w)
+	ci.draw_line(o + Vector2(r * 0.18, 0), o + Vector2(r * 0.18, r * 0.1), ink, w)
+
+
+## Прихований гвинт: сіра головка зі знаком «?».
+static var _q_font: Font
+
+
+static func draw_hidden(ci: CanvasItem, c: Vector2, r: float, lift: float = 0.0) -> void:
+	var col := Color("9aa3b5")
+	ci.draw_circle(c + Vector2(r * 0.08, r * 0.16), r, Color(0.02, 0.08, 0.2, 0.28 - lift * 0.12))
+	ci.draw_circle(c, r, col.darkened(0.3))
+	ci.draw_circle(c - Vector2(0, r * 0.07), r * 0.86, col)
+	ci.draw_colored_polygon(_ellipse(c + Vector2(0, -r * 0.36), r * 0.6, r * 0.32, 0.0), Color(col.lightened(0.35), 0.8))
+	if _q_font == null:
+		_q_font = UiTheme.font(900)
+	var font := _q_font
+	var fs := int(r * 1.2)
+	var w := font.get_string_size("?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	ci.draw_string(font, c + Vector2(-w / 2.0, r * 0.42), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color.WHITE)
+
+
+## Скляна пластина: прозоре блакитне скло з білими відблисками.
+static func draw_glass_plate(ci: CanvasItem, shape: String, size: Vector2, holes: Array, r: float, rot: float, alpha: float = 1.0) -> void:
+	var outline := plate_outline(shape, size)
+	var down := Vector2(0, 1).rotated(-rot)
+	ci.draw_colored_polygon(_offset(outline, down * 10.0), Color(0.02, 0.08, 0.2, 0.12 * alpha))
+	ci.draw_colored_polygon(outline, Color(0.82, 0.95, 1.0, 0.42 * alpha))
+	var inner := _scaled(outline, size, 10.0)
+	if inner.size() > 2:
+		ci.draw_colored_polygon(inner, Color(1, 1, 1, 0.12 * alpha))
+	# Діагональні відблиски.
+	var half := size * 0.5
+	for k in 2:
+		var x := -half.x * 0.5 + k * half.x * 0.35
+		ci.draw_line(Vector2(x, half.y * 0.7), Vector2(x + half.y * 0.9, -half.y * 0.7), Color(1, 1, 1, 0.5 * alpha), 5.0 - k * 2.0, true)
+	var loop := outline.duplicate()
+	loop.append(outline[0])
+	ci.draw_polyline(loop, Color(0.9, 0.98, 1.0, 0.95 * alpha), 4.0, true)
+	for h in holes:
+		draw_hole(ci, h, r * 1.02, alpha * 0.8)
+
+
+## Ланцюг між двома точками: ланки з темнішим контуром.
+static func draw_chain(ci: CanvasItem, from: Vector2, to: Vector2, alpha: float = 1.0, jiggle: float = 0.0) -> void:
+	var d := to - from
+	var len := d.length()
+	if len < 1.0:
+		return
+	var dir := d / len
+	var n := maxi(2, int(len / 26.0))
+	var nrm := dir.orthogonal()
+	var col := Color("b8c2d4")
+	for i in n + 1:
+		var t := float(i) / n
+		var p := from.lerp(to, t) + nrm * sin(t * PI) * jiggle
+		var horizontal := i % 2 == 0
+		var ang := dir.angle() + (0.0 if horizontal else PI / 2.0)
+		var pts := _ellipse(p, 15.0 if horizontal else 9.0, 8.0 if horizontal else 13.0, ang if horizontal else dir.angle(), 14)
+		var loop := pts.duplicate()
+		loop.append(pts[0])
+		ci.draw_polyline(loop, Color(0.2, 0.25, 0.35, 0.8 * alpha), 7.0, true)
+		ci.draw_polyline(loop, Color(col, alpha), 4.0, true)
+	# Кріплення на кінцях.
+	for e in [from, to]:
+		ci.draw_circle(e, 11.0, Color(0.2, 0.25, 0.35, 0.8 * alpha))
+		ci.draw_circle(e, 8.0, Color(col.lightened(0.2), alpha))

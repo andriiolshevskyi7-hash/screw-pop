@@ -10,6 +10,16 @@ extends RefCounted
 ## закривається і відлітає, на її місце приїжджає наступна з черги й забирає
 ## з буфера гвинти свого кольору. Перемога — коли впали всі пластини.
 ## Програш — буфер повний і жоден вільний гвинт не підходить до коробок.
+##
+## Механіки (вводяться поступово, див. Mechanics):
+##  - замок/ключ: гвинт з замком (`lock` = номер гвинта-ключа) не відкручується,
+##    доки не відкручено ключ;
+##  - скляна пластина (`glass`): розбивається, коли з неї знято половину гвинтів;
+##    гвинти, що лишились, тримаються в дошці під нею (їх треба відкрутити, але
+##    пластина вже нічого не накриває);
+##  - прихований гвинт (`hidden`): колір видно, лише коли гвинт не накритий
+##    (правил ходу не змінює — лише показ);
+##  - ланцюг (`chain` = номер пластини-пари): дві пластини падають лише разом.
 
 const BUFFER_SIZE := 5
 const BOX_CAPACITY := 3
@@ -17,10 +27,12 @@ const ACTIVE_BOXES := 2
 ## Радіус головки гвинта в одиницях поля.
 const SCREW_R := 26.0
 
-## Пластини: {"pos": Vector2, "size": Vector2, "rot": float, "shape": "bar"|"disc", "tint": int}.
+## Пластини: {"pos": Vector2, "size": Vector2, "rot": float, "shape": "bar"|"disc", "tint": int,
+##            "glass": bool (необов'язково), "chain": int (необов'язково, -1 — немає)}.
 ## Індекс пластини = її шар (вищий індекс лежить вище).
 var plates: Array = []
-## Гвинти: {"plate": int, "pos": Vector2, "color": int}.
+## Гвинти: {"plate": int, "pos": Vector2, "color": int,
+##          "lock": int (номер гвинта-ключа, -1 — немає), "hidden": bool} (останні два необов'язкові).
 var screws: Array = []
 ## Черга кольорів коробок (усі коробки рівня по порядку).
 var box_queue: PackedInt32Array = PackedInt32Array()
@@ -28,6 +40,12 @@ var box_queue: PackedInt32Array = PackedInt32Array()
 var covers: Array = []
 ## plate_screws[p] — гвинти пластини p.
 var plate_screws: Array = []
+## lock_of[s] — гвинт-ключ, що відмикає s (-1 — без замка); keys_of[k] — що відмикає ключ k.
+var lock_of := PackedInt32Array()
+var keys_of: Array = []
+## Механіки пластин (для швидкості — масиви).
+var glass := PackedByteArray()
+var chain_of := PackedInt32Array()
 
 # --- Динамічний стан ---------------------------------------------------------
 var removed := PackedByteArray()
@@ -41,6 +59,7 @@ var box_color := PackedInt32Array()
 var box_count := PackedInt32Array()
 var next_box := 0
 var plates_left := 0
+var _screws_left := 0
 
 
 ## Обчислює накриття і скидає динамічний стан до початкового.
@@ -58,6 +77,19 @@ func setup() -> void:
 			if shape_distance(plates[q], screws[s].pos) < SCREW_R - 2.0:
 				c.append(q)
 		covers.append(c)
+	lock_of = PackedInt32Array()
+	keys_of = []
+	for i in screws.size():
+		lock_of.append(int(screws[i].get("lock", -1)))
+		keys_of.append(PackedInt32Array())
+	for i in screws.size():
+		if lock_of[i] >= 0:
+			keys_of[lock_of[i]].append(i)
+	glass = PackedByteArray()
+	chain_of = PackedInt32Array()
+	for p in plates.size():
+		glass.append(1 if plates[p].get("glass", false) else 0)
+		chain_of.append(int(plates[p].get("chain", -1)))
 	reset()
 
 
@@ -68,10 +100,11 @@ func reset(buffer_size: int = BUFFER_SIZE) -> void:
 	plate_gone.resize(plates.size())
 	plate_left = PackedInt32Array()
 	plates_left = 0
+	_screws_left = screws.size()
 	for p in plates.size():
 		plate_left.append(plate_screws[p].size())
 		# Пластина без гвинтів (не буває в згенерованих рівнях) одразу вважається впалою.
-		if plate_screws[p].is_empty():
+		if plate_screws[p].is_empty() and chain_of[p] < 0:
 			plate_gone[p] = 1
 		else:
 			plates_left += 1
@@ -94,6 +127,10 @@ func clone() -> ScrewBoard:
 	c.box_queue = box_queue
 	c.covers = covers
 	c.plate_screws = plate_screws
+	c.lock_of = lock_of
+	c.keys_of = keys_of
+	c.glass = glass
+	c.chain_of = chain_of
 	c.removed = removed.duplicate()
 	c.plate_gone = plate_gone.duplicate()
 	c.plate_left = plate_left.duplicate()
@@ -102,6 +139,7 @@ func clone() -> ScrewBoard:
 	c.box_count = box_count.duplicate()
 	c.next_box = next_box
 	c.plates_left = plates_left
+	c._screws_left = _screws_left
 	return c
 
 
@@ -125,10 +163,29 @@ func color_of(s: int) -> int:
 func is_free(s: int) -> bool:
 	if removed[s]:
 		return false
+	if lock_of[s] >= 0 and not removed[lock_of[s]]:
+		return false
+	return not is_covered(s)
+
+
+## Гвинт накритий пластиною вищого шару (замок не враховується).
+func is_covered(s: int) -> bool:
 	for q in covers[s]:
 		if not plate_gone[q]:
-			return false
-	return true
+			return true
+	return false
+
+
+func is_locked(s: int) -> bool:
+	return not removed[s] and lock_of[s] >= 0 and not removed[lock_of[s]]
+
+
+func is_key(s: int) -> bool:
+	return not keys_of[s].is_empty()
+
+
+func is_hidden(s: int) -> bool:
+	return bool(screws[s].get("hidden", false))
 
 
 ## Коробка, у яку полетить гвинт кольору `color` (або -1).
@@ -165,7 +222,7 @@ func free_screws() -> PackedInt32Array:
 
 
 func is_won() -> bool:
-	return plates_left == 0
+	return plates_left == 0 and _screws_left == 0
 
 
 ## Програш: немає жодного ходу (буфер повний, і вільні гвинти не підходять до коробок).
@@ -179,11 +236,7 @@ func is_stuck() -> bool:
 
 
 func screws_left() -> int:
-	var n := 0
-	for r in removed:
-		if not r:
-			n += 1
-	return n
+	return _screws_left
 
 
 # --- Хід ------------------------------------------------------------------
@@ -209,14 +262,48 @@ func tap(s: int) -> Array:
 		var slot := buffer.find(-1)
 		buffer[slot] = color
 		ev.append({"t": "buf", "s": s, "slot": slot})
-	var p: int = screws[s].plate
-	plate_left[p] -= 1
-	if plate_left[p] == 0 and not plate_gone[p]:
-		plate_gone[p] = 1
-		plates_left -= 1
-		ev.append({"t": "fall", "plate": p})
+	remove_structural(s, ev)
 	_resolve_boxes(ev)
 	return ev
+
+
+## Структурна частина ходу (без коробок і буфера): гвинт знято, ключ відмикає замки,
+## скло розбивається, пластини падають (ланцюгом — лише разом). Генератор нею ж
+## шукає допустимий порядок відкручування.
+##   {"t": "unlock", "s"}   — замок на гвинті s відкрито;
+##   {"t": "break", "plate"} — скляна пластина розбилась;
+##   {"t": "hold", "plate"}  — пластина без гвинтів тримається ланцюгом.
+func remove_structural(s: int, ev: Array) -> void:
+	removed[s] = 1
+	_screws_left -= 1
+	for l in keys_of[s]:
+		ev.append({"t": "unlock", "s": l})
+	var p: int = screws[s].plate
+	plate_left[p] -= 1
+	if plate_gone[p]:
+		return  # гвинт у дошці під розбитим склом
+	if glass[p]:
+		var n: int = plate_screws[p].size()
+		if (n - plate_left[p]) * 2 >= n:
+			_drop(p)
+			ev.append({"t": "break", "plate": p})
+		return
+	if plate_left[p] > 0:
+		return
+	var q := chain_of[p]
+	if q >= 0 and not plate_gone[q]:
+		if plate_left[q] > 0:
+			ev.append({"t": "hold", "plate": p})
+			return
+		_drop(q)
+		ev.append({"t": "fall", "plate": q})
+	_drop(p)
+	ev.append({"t": "fall", "plate": p})
+
+
+func _drop(p: int) -> void:
+	plate_gone[p] = 1
+	plates_left -= 1
 
 
 ## Додає слот у буфер (реклама/бустер). Повертає індекс нового слота.

@@ -20,7 +20,7 @@ env:
   # Після завантаження збірки в Play Console це число можна підняти.
   PLAY_LAST_VERSION_CODE: "0"
   # versionName = база + номер запуску, наприклад 0.1.5. База росте з кожним етапом розробки.
-  VERSION_NAME_BASE: "0.1"
+  VERSION_NAME_BASE: "0.2"
   # Шаблон Gradle Godot 4.3 розрахований на SDK 34; Google Play вимагає
   # target SDK 36 (з 31.08.2026), тому оновлюємо інструменти збірки.
   ANDROID_COMPILE_SDK: "36"
@@ -129,8 +129,8 @@ jobs:
           export GRADLE_USER_HOME="$PWD/.gradle-home"
           godot --headless --import || true
 
-      - name: Level generator test (levels 1-60 solvable)
-        run: godot --headless --script res://tests/generator_test.gd -- 1 60
+      - name: Level generator test (levels 1-130 solvable, mechanics)
+        run: godot --headless --script res://tests/generator_test.gd -- 1 130
 
       - name: Smoke test (play through levels by taps)
         run: godot --headless --script res://tests/smoke_test.gd

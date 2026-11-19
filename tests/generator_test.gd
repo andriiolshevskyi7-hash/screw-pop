@@ -42,6 +42,32 @@ func _initialize() -> void:
 		if per != qper:
 			print("   COLOR COUNTS MISMATCH ", per, qper)
 			failed = true
+		# Механіки: стільки, скільки задано, не раніше свого рівня; на рівні знайомства — лише нова.
+		var found := {}
+		for pl in board.plates:
+			if pl.get("glass", false):
+				found["glass"] = int(found.get("glass", 0)) + 1
+			if int(pl.get("chain", -1)) >= 0:
+				found["chain"] = int(found.get("chain", 0)) + 1
+		for sc in board.screws:
+			if int(sc.get("lock", -1)) >= 0:
+				found["lock"] = int(found.get("lock", 0)) + 1
+			if sc.get("hidden", false):
+				found["hidden"] = int(found.get("hidden", 0)) + 1
+		if found.has("chain"):
+			found["chain"] = found["chain"] / 2
+		if found != g.params.mech:
+			print("   MECHANICS MISMATCH want %s got %s" % [g.params.mech, found])
+			failed = true
+		for m in Mechanics.LIST:
+			if found.has(m.id) and level < int(m.from):
+				print("   MECHANIC %s BEFORE LEVEL %d" % [m.id, m.from])
+				failed = true
+		if Mechanics.is_intro_level(level) and found.size() != 1:
+			print("   INTRO LEVEL WITH OTHER MECHANICS ", found)
+			failed = true
+		if not found.is_empty():
+			print("   mech ", found)
 		# Детермінованість.
 		if level <= from + 2:
 			var g2 := LevelGenerator.generate(level, LevelGenerator.seed_for_level(level))

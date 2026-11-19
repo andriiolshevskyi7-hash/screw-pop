@@ -16,6 +16,9 @@ var plate_size := Vector2.ONE
 var tint := Color.WHITE
 var holes: Array = []
 var screw_views := {}
+var is_glass := false
+## Скло розбилось: лишились лише гвинти в дошці.
+var broken := false
 var base_pos := Vector2.ZERO
 var base_rot := 0.0
 
@@ -37,6 +40,7 @@ func setup(p_index: int, plate: Dictionary, p_holes: Array, screw_radius: float)
 	shape = plate.shape
 	plate_size = plate.size
 	tint = ScrewPainter.tint_of(int(plate.tint))
+	is_glass = plate.get("glass", false)
 	base_pos = plate.pos
 	base_rot = plate.rot
 	position = base_pos
@@ -57,12 +61,34 @@ func add_screw(view: ScrewView, local_pos: Vector2) -> void:
 
 
 func _draw() -> void:
-	ScrewPainter.draw_plate(self, shape, plate_size, tint, holes, _screw_r, rotation, _alpha)
+	if broken:
+		# Гвинти, що лишились, тримаються в дошці: темне гніздо під кожним.
+		for v in screw_views.values():
+			draw_circle(v.position, _screw_r * 1.12, Color(0.03, 0.08, 0.2, 0.35))
+		return
+	if is_glass:
+		ScrewPainter.draw_glass_plate(self, shape, plate_size, holes, _screw_r, rotation, _alpha)
+	else:
+		ScrewPainter.draw_plate(self, shape, plate_size, tint, holes, _screw_r, rotation, _alpha)
+
+
+## Скло розбивається на уламки, що розлітаються й падають.
+func shatter() -> void:
+	broken = true
+	_wobble_t = -1.0
+	position = base_pos
+	rotation = base_rot
+	queue_redraw()
+	var fx := ShardFx.new()
+	fx.position = position
+	fx.rotation = rotation
+	get_parent().add_child(fx)
+	fx.setup(ScrewPainter.plate_outline(shape, plate_size))
 
 
 ## Пластина тримається на одному гвинті — коротко гойдається навколо нього.
 func wobble(pivot_local: Vector2) -> void:
-	if _falling:
+	if _falling or broken:
 		return
 	_wobble_pivot = base_pos + pivot_local.rotated(base_rot)
 	_wobble_t = 0.0

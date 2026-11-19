@@ -51,6 +51,7 @@ var _active := 0
 var _box_lock := 0
 ## Покоління анімацій: рестарт/вихід збільшує його, і старі корутини ходів зупиняються.
 var _gen := 0
+var _tutorial: TutorialOverlay
 var _hand: TextureRect
 var _hand_tween: Tween
 var _hand_screw := -1
@@ -72,6 +73,9 @@ func _ready() -> void:
 	GameState.language_changed.connect(_update_texts)
 	GameState.cosmetics_changed.connect(_redraw_all)
 	_build_hand()
+	_tutorial = TutorialOverlay.new()
+	add_child(_tutorial)
+	move_child(_tutorial, lose_popup.get_index())
 	_layout_boxes()
 
 
@@ -127,6 +131,8 @@ func restart() -> void:
 
 func _clear() -> void:
 	_gen += 1
+	if _tutorial:
+		_tutorial.dismiss()
 	board = null
 	_won = false
 	_lost = false
@@ -166,6 +172,9 @@ func _play_intro() -> void:
 		tw.tween_property(v, "position", home, 0.35).set_delay(i * 0.035).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 		tw.tween_property(v, "modulate:a", 1.0, 0.2).set_delay(i * 0.035)
 		i += 1
+	for cv in board_view.chain_views.values():
+		cv.modulate.a = 0.0
+		cv.create_tween().tween_property(cv, "modulate:a", 1.0, 0.3).set_delay(i * 0.035)
 	for k in boxes.size():
 		boxes[k].scale = Vector2(0.6, 0.6)
 		boxes[k].create_tween().tween_property(boxes[k], "scale", Vector2.ONE, 0.4).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
@@ -247,6 +256,15 @@ func _on_screw_pressed(s: int) -> void:
 	var sv: ScrewView = board_view.screw_views.get(s)
 	if sv == null:
 		return
+	if board.is_locked(s) and not board.is_covered(s):
+		# Замкнений: трясеться, а його ключ «підстрибує», підказуючи, що відкрутити спершу.
+		sv.shake()
+		Sfx.play("locked")
+		Sfx.vibrate(18)
+		var key: ScrewView = board_view.screw_views.get(board.lock_of[s])
+		if key:
+			key.pop()
+		return
 	if not board.is_free(s):
 		# Накритий пластиною: легке трясіння.
 		sv.shake()
@@ -293,16 +311,30 @@ func _play(ev: Array) -> void:
 	var r_from := ScrewBoard.SCREW_R * board_view.board_scale * 1.22
 	sv.queue_free()
 	Sfx.play("pop", randf_range(0.95, 1.1))
-	# Пластина: падає (якщо гвинтів не лишилось) або гойдається на останньому.
-	var falls := false
+	# Пластини: падають (ланцюгом — разом), скло розбивається, повисла на ланцюгу —
+	# смикається; з одним гвинтом — гойдається на ньому.
+	var structural := false
 	for e in ev:
-		if e.t == "fall":
-			falls = true
-	if falls:
-		_drop_plate(pv)
-	elif pv.screw_views.size() == 1:
+		match e.t:
+			"fall":
+				structural = true
+				var fv: PlateView = board_view.plate_views.get(int(e.plate))
+				if fv:
+					_drop_plate(fv)
+			"break":
+				structural = true
+				_break_plate(pv)
+			"hold":
+				structural = true
+				pv.wobble(Vector2.ZERO)
+				var cv: ChainView = board_view.chain_views.get(int(e.plate))
+				if cv:
+					cv.rattle()
+				Sfx.play("chain")
+	if not structural and pv.screw_views.size() == 1 and not pv.is_glass:
 		var last: ScrewView = pv.screw_views.values()[0]
 		pv.wobble(last.position)
+	_refresh_mechanics()
 	# Політ.
 	var to: Vector2
 	if first.t == "box":
@@ -388,7 +420,32 @@ func _fly(color: int, from: Vector2, to: Vector2, r_from: float, r_to: float, du
 	f.queue_free()
 
 
+## Замки відкрито / «?» показали колір — звук і перевірка знайомства.
+func _refresh_mechanics() -> void:
+	var r := board_view.refresh_states()
+	if r.unlocked > 0:
+		Sfx.play("unlock")
+	if r.revealed > 0:
+		Sfx.play("reveal")
+
+
+func _break_plate(pv: PlateView) -> void:
+	pv.shatter()
+	Sfx.play("glass")
+	Sfx.vibrate(25)
+	await get_tree().create_timer(0.12).timeout
+	if board == null:
+		return
+	for s in board_view.screw_views:
+		if board.is_free(s) and board.covers[s].has(pv.index):
+			board_view.screw_views[s].pop()
+	_refresh_mechanics()
+
+
 func _drop_plate(pv: PlateView) -> void:
+	var cv: ChainView = board_view.chain_views.get(pv.index)
+	if cv:
+		cv.fall()
 	board_view.plate_views.erase(pv.index)
 	pv.bounced.connect(func() -> void:
 		Sfx.play("thud", randf_range(0.9, 1.1))
@@ -402,6 +459,7 @@ func _drop_plate(pv: PlateView) -> void:
 	for s in board_view.screw_views:
 		if board.is_free(s) and board.covers[s].has(pv.index):
 			board_view.screw_views[s].pop()
+	_refresh_mechanics()
 
 
 ## Перевірка кінця рівня, коли всі анімації скінчились.
@@ -478,19 +536,66 @@ func _build_hand() -> void:
 
 
 func _start_tutorial() -> void:
-	if GameState.is_tutorial_done("tap") and not debug_play:
-		return
-	if debug_play and level != 1:
-		return
 	var my_load := _load_id
 	await get_tree().create_timer(0.6).timeout
 	if my_load != _load_id or board == null:
+		return
+	var first_tap := not GameState.is_tutorial_done("tap") if not debug_play else level == 1
+	if not first_tap:
+		_show_mechanic_intro()
 		return
 	# Вільний гвинт, що одразу ляже в коробку.
 	for s in board.screw_count():
 		if board.is_free(s) and board.box_for(board.color_of(s)) != -1:
 			_show_hand(s, tr("TUT_TAP"))
 			return
+
+
+## Знайомство з механікою на рівні, де вона вперше трапилась: затемнення,
+## підсвічені цілі й одне речення. Один раз (id механіки → tutorials_done).
+func _show_mechanic_intro() -> void:
+	for m in Mechanics.LIST:
+		var id: String = m.id
+		if GameState.is_tutorial_done(id) and not (debug_play and Mechanics.unlock_level(id) == level):
+			continue
+		var targets := _mechanic_targets(id)
+		if targets.is_empty():
+			continue
+		_tutorial.spotlight(targets, tr(m.text))
+		Sfx.play("select")
+		await _tutorial.dismissed
+		if not debug_play:
+			GameState.mark_tutorial_done(id)
+		return
+
+
+## Глобальні прямокутники, які підсвічує знайомство з механікою.
+func _mechanic_targets(id: String) -> Array:
+	var out := []
+	if board == null:
+		return out
+	var k := board_view.board_scale
+	var side := ScrewBoard.SCREW_R * 2.6 * k
+	match id:
+		Mechanics.LOCK, Mechanics.HIDDEN:
+			for s in board_view.screw_views:
+				var hit := false
+				if id == Mechanics.LOCK:
+					hit = board.is_locked(s) or (board.is_key(s) and not board.removed[s])
+				else:
+					hit = board.is_hidden(s) and board.is_covered(s)
+				if hit:
+					var c := board_view.screw_global(s)
+					out.append(Rect2(c - Vector2(side, side) / 2.0, Vector2(side, side)))
+		Mechanics.GLASS, Mechanics.CHAIN:
+			for p in board_view.plate_views:
+				var hit := board.glass[p] == 1 if id == Mechanics.GLASS else board.chain_of[p] >= 0
+				if hit and not board.plate_gone[p]:
+					var pl: Dictionary = board.plates[p]
+					var he := LevelGenerator._half_extent(pl.shape, pl.size, pl.rot) * k
+					var c: Vector2 = board_view.plates_root.get_global_transform() * Vector2(pl.pos)
+					out.append(Rect2(c - he, he * 2.0))
+	return out
 
 
 func _show_hand(s: int, text: String) -> void:

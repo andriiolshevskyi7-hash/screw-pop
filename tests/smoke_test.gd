@@ -56,6 +56,35 @@ func _run() -> void:
 		await create_timer(1.6).timeout
 		_check(win.visible, "рівень %d пройдено через натискання" % lvl)
 		win.hide()
+	# Механіки: на рівні відкриття — знайомство (підсвітка + речення), рівень проходиться.
+	for m in Mechanics.LIST:
+		var lvl: int = m.from
+		game.start_level(lvl)
+		await _wait_loaded()
+		await create_timer(1.4).timeout
+		_check(game._tutorial.visible, "рівень %d: знайомство з механікою «%s»" % [lvl, m.id])
+		await _shot("07_intro_%s" % m.id)
+		game._tutorial.dismiss()
+		_check(gs.is_tutorial_done(m.id), "знайомство «%s» записано" % m.id)
+		if m.id == Mechanics.LOCK:
+			for s in game.board.screw_count():
+				if game.board.is_locked(s) and not game.board.is_covered(s):
+					var before: int = game.board.screws_left()
+					game._on_screw_pressed(s)
+					_check(game.board.screws_left() == before, "замкнений гвинт не відкручується до ключа")
+		await _solve_level(true)
+		await create_timer(1.6).timeout
+		_check(win.visible, "рівень %d з механікою «%s» пройдено" % [lvl, m.id])
+		win.hide()
+	# Поєднання механік.
+	game.start_level(120)
+	await _wait_loaded()
+	await create_timer(1.0).timeout
+	await _shot("08_combo")
+	await _solve_level(true)
+	await create_timer(1.6).timeout
+	_check(win.visible, "рівень 120 (поєднання механік) пройдено")
+	win.hide()
 	# Програш: кладемо в буфер усе, що не йде в коробку.
 	game.start_level(20)
 	await _wait_loaded()
