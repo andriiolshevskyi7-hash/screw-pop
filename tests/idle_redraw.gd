@@ -46,6 +46,28 @@ func _run() -> void:
 	_check(get_processed_tweens().size() > 0, "під час ходу анімації працюють")
 	await create_timer(4.0).timeout
 	await _idle("гра після ходів")
+	# Хитка пластина: маятник працює покадрово, а потім зупиняється.
+	main._start(Mechanics.unlock_level(Mechanics.SWING))
+	while game.loading:
+		await process_frame
+	await create_timer(1.0).timeout
+	game._tutorial.dismiss()
+	var swung := false
+	for s in LevelPack.level(game.level).solution:
+		while game.is_input_locked():
+			await process_frame
+		var events: Array = game.board.clone().tap(s)
+		game._on_screw_pressed(s)
+		await create_timer(0.3).timeout
+		if events.any(func(e) -> bool: return e.t == "swing"):
+			swung = true
+			var busy := []
+			_collect_processing(root, busy)
+			_check(not busy.is_empty(), "маятник хиткої пластини працює")
+			break
+	_check(swung, "хитка пластина повернулась")
+	await create_timer(4.0).timeout
+	await _idle("гра після маятника")
 	print("IDLE REDRAW FAILED" if failed else "IDLE REDRAW OK")
 	quit(1 if failed else 0)
 
