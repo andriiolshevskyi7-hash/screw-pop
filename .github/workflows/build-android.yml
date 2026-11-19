@@ -166,6 +166,14 @@ jobs:
           ls -la build
           test -f "build/${APK_NAME}-${VERSION_NAME}-debug.apk"
 
+      # Debug-APK викладається одразу, щоб його можна було встановити, навіть якщо далі щось впаде.
+      - uses: actions/upload-artifact@v6
+        with:
+          name: ${{ env.APK_NAME }}-debug-apk-v${{ env.VERSION_NAME }}
+          path: build/${{ env.APK_NAME }}-${{ env.VERSION_NAME }}-debug.apk
+          if-no-files-found: error
+          retention-days: 3
+
       # Ключ підпису береться ЛИШЕ із секретів репозиторію. Якщо секретів ще
       # немає, AAB збирається з тимчасовим ключем тільки для перевірки збірки
       # і НЕ викладається (інакше його можна випадково завантажити в Play).
@@ -204,6 +212,12 @@ jobs:
                 echo "::error::KEYSTORE_BASE64 розкодовано, але це не дійсний keystore (файл пошкоджений або обрізаний). Перевставте весь вміст upload-keystore.base64.txt."
               fi
               exit 1
+            fi
+            # Секрет KEY_ALIAS порожній, а в ключі рівно один ключ — беремо його alias.
+            ALIASES=$(echo "$OUT" | grep -i 'PrivateKeyEntry' | cut -d, -f1)
+            if [ -z "$KEY_ALIAS" ] && [ "$(echo "$ALIASES" | grep -c .)" = "1" ]; then
+              KEY_ALIAS="$ALIASES"
+              echo "::warning::Секрет KEY_ALIAS порожній — використано єдиний alias з ключа: $KEY_ALIAS. Задайте KEY_ALIAS у секретах репозиторію."
             fi
             if ! keytool -list -keystore "$KS" -storepass "$KEYSTORE_PASSWORD" -alias "$KEY_ALIAS" > /dev/null 2>&1; then
               echo "::error::KEY_ALIAS не знайдено в ключі. Alias у цьому ключі: $(echo "$OUT" | grep -i 'PrivateKeyEntry' | cut -d, -f1 | tr '\n' ' ')"
@@ -337,13 +351,6 @@ jobs:
           case "$ORIENT" in 1|portrait) ;; *) fail "Орієнтація гри має бути вертикальною (portrait), а в AAB: '$ORIENT'" ;; esac
           echo "OK: screen.portrait required=false, орієнтація вертикальна."
           echo "### AAB для Google Play: versionCode **$AAB_VC**, versionName **$AAB_VN**, screen.portrait required=**$PORTRAIT_REQ**, screenOrientation=**$ORIENT**" >> "$GITHUB_STEP_SUMMARY"
-
-      - uses: actions/upload-artifact@v6
-        with:
-          name: ${{ env.APK_NAME }}-debug-apk-v${{ env.VERSION_NAME }}
-          path: build/${{ env.APK_NAME }}-${{ env.VERSION_NAME }}-debug.apk
-          if-no-files-found: error
-          retention-days: 3
 
       # Графіка для сторінки в Google Play (зі store/, рендер з гри — див. store/README.md).
       # Лише при ручному запуску (Run workflow), щоб не займати сховище на кожен push.
