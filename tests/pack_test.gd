@@ -8,11 +8,14 @@ extends SceneTree
 ##  - рівні після кінця пакета (по колу, з іншими кольорами) теж проходяться.
 ## Запуск: godot --headless --script res://tests/pack_test.gd
 
+const MIN_LEVELS := 150
+
+
 func _initialize() -> void:
 	var failed := false
 	var n := LevelPack.size()
 	print("pack: %d levels" % n)
-	if n < 150:
+	if n < MIN_LEVELS:
 		print("PACK TOO SMALL")
 		failed = true
 	var t0 := Time.get_ticks_msec()
