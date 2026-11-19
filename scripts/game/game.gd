@@ -173,6 +173,8 @@ func _play_intro() -> void:
 		tw.tween_property(v, "modulate:a", 1.0, 0.2).set_delay(i * 0.035)
 		i += 1
 	for cv in board_view.chain_views.values():
+		if not is_instance_valid(cv):
+			continue
 		cv.modulate.a = 0.0
 		cv.create_tween().tween_property(cv, "modulate:a", 1.0, 0.3).set_delay(i * 0.035)
 	for k in boxes.size():
@@ -327,8 +329,8 @@ func _play(ev: Array) -> void:
 			"hold":
 				structural = true
 				pv.wobble(Vector2.ZERO)
-				var cv: ChainView = board_view.chain_views.get(int(e.plate))
-				if cv:
+				var cv = board_view.chain_views.get(int(e.plate))
+				if is_instance_valid(cv):
 					cv.rattle()
 				Sfx.play("chain")
 	if not structural and pv.screw_views.size() == 1 and not pv.is_glass:
@@ -443,9 +445,12 @@ func _break_plate(pv: PlateView) -> void:
 
 
 func _drop_plate(pv: PlateView) -> void:
-	var cv: ChainView = board_view.chain_views.get(pv.index)
-	if cv:
+	var cv = board_view.chain_views.get(pv.index)
+	if is_instance_valid(cv):
 		cv.fall()
+		# Ланцюг падає й видаляється — більше на нього не посилаємось.
+		board_view.chain_views.erase(cv.plate_a)
+		board_view.chain_views.erase(cv.plate_b)
 	board_view.plate_views.erase(pv.index)
 	pv.bounced.connect(func() -> void:
 		Sfx.play("thud", randf_range(0.9, 1.1))
