@@ -228,8 +228,8 @@ static func draw_bomb_ring(ci: CanvasItem, c: Vector2, r: float) -> void:
 ## Лічильник бомби (малюється над пластинами — його видно завжди): великий
 ## червоний кружок з числом ходів; `pulse` 0…1 — збільшення й світіння (на ≤ 3).
 static func draw_bomb_counter(ci: CanvasItem, c: Vector2, r: float, left: int, pulse: float) -> void:
-	var at := c + Vector2(0, -r * 1.25)
-	var rr := r * (0.78 + 0.25 * pulse)
+	var at := c + Vector2(0, -r * 1.55)
+	var rr := r * (1.02 + 0.3 * pulse)
 	var hot := left <= 3
 	var col := Color("e5383b") if hot else Color("2a1f5c")
 	if pulse > 0.0:
@@ -237,7 +237,7 @@ static func draw_bomb_counter(ci: CanvasItem, c: Vector2, r: float, left: int, p
 	ci.draw_circle(at + Vector2(0, 3), rr, Color(0.02, 0.08, 0.2, 0.3))
 	ci.draw_circle(at, rr, Color.WHITE)
 	ci.draw_circle(at, rr * 0.82, col)
-	draw_centered(ci, at, str(left), int(rr * 1.2), Color.WHITE)
+	draw_centered(ci, at, str(left), int(rr * 1.25), Color.WHITE)
 
 
 ## Сейф на місці коробки: сталеві дверцята з кольоровою міткою (якого кольору

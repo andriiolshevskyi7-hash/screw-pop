@@ -608,7 +608,7 @@ func _mechanic_targets(id: String) -> Array:
 					var c := board_view.screw_global(s)
 					if id == Mechanics.BOMB:
 						# Разом з лічильником над гвинтом.
-						out.append(Rect2(c - Vector2(side, side * 1.6) / 2.0 - Vector2(0, side * 0.3), Vector2(side, side * 1.6)))
+						out.append(Rect2(c - Vector2(side, side * 1.9) / 2.0 - Vector2(0, side * 0.42), Vector2(side, side * 1.9)))
 					else:
 						out.append(Rect2(c - Vector2(side, side) / 2.0, Vector2(side, side)))
 		Mechanics.SWING:
