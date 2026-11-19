@@ -87,7 +87,7 @@ func _run() -> void:
 	_check(win.visible, "рівень 120 (поєднання механік) пройдено")
 	win.hide()
 	# Програш: кладемо в буфер усе, що не йде в коробку.
-	game.start_level(20)
+	game.start_level(_losing_level())
 	await _wait_loaded()
 	await create_timer(0.6).timeout
 	var guard := 0
@@ -155,6 +155,28 @@ func _solve_level(fast: bool = false) -> void:
 		else:
 			await _settle()
 	await _settle()
+
+
+## Рівень, який «найгірша» гра (усе, що можна, — у буфер) програє: шукаємо, а не
+## хардкодимо номер — інакше тест ламався б з кожною зміною генератора.
+func _losing_level() -> int:
+	for lvl in range(15, 120):
+		var g := LevelGenerator.generate(lvl, LevelGenerator.seed_for_level(lvl))
+		var b := ScrewBoard.from_dict(g.board)
+		while not b.is_won() and not b.is_stuck():
+			var pick := -1
+			var any := -1
+			for s in b.screw_count():
+				if b.can_tap(s):
+					if b.box_for(b.color_of(s)) == -1:
+						pick = s
+						break
+					any = s
+			b.tap(pick if pick != -1 else any)
+		if b.is_stuck():
+			print("  (програш перевіряється на рівні %d)" % lvl)
+			return lvl
+	return 26
 
 
 ## Найгірший хід: вільний гвинт, що не йде в коробку (інакше — будь-який вільний).
