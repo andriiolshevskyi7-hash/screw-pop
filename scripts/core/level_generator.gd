@@ -383,6 +383,10 @@ static func _place_swings(rng: RandomNumberGenerator, board: ScrewBoard, count: 
 
 
 ## Скільки нових гвинтів накриває пластина, звисаючи на накритому гвинті (0 — не годиться).
+## Наскільки звисла пластина може виходити за низ поля (там ще є місце до кнопок).
+const SWING_BELOW := 150.0
+
+
 static func _swing_score(board: ScrewBoard, p: int) -> int:
 	if board.plate_screws[p].size() < 2:
 		return 0
@@ -396,14 +400,15 @@ static func _swing_score(board: ScrewBoard, p: int) -> int:
 		hung.pos = pose.pos
 		hung.rot = pose.rot
 		var he := _half_extent(hung.shape, hung.size, hung.rot)
-		if hung.pos.y + he.y > BOARD_H + 90.0 or hung.pos.x - he.x < -20.0 or hung.pos.x + he.x > BOARD_W + 20.0:
+		if hung.pos.y + he.y > BOARD_H + SWING_BELOW or hung.pos.x - he.x < -30.0 or hung.pos.x + he.x > BOARD_W + 30.0:
 			return 0
 		var newly := 0
 		for s in board.screw_count():
 			if int(board.screws[s].plate) >= p:
 				continue
 			var d := ScrewBoard.shape_distance(hung, board.screws[s].pos)
-			if d > R - 12.0 and d < R + 8.0:
+			# Звисла пластина або чітко заходить на головку, або чітко її оминає.
+			if d > R - 5.0 and d < R + 2.0:
 				return 0
 			if d < R - 2.0 and not board.covers[s].has(p):
 				newly += 1
@@ -428,7 +433,10 @@ static func _place_chameleons(rng: RandomNumberGenerator, board: ScrewBoard, ord
 	if palette.size() < 2:
 		return false
 	var cands := []
-	for i in order.size():
+	# Лише непарні ходи: тоді потрібен другий колір (b), а на старті видно перший (a) —
+	# гравець, що вважає хамелеона гвинтом стартового кольору, отримає зайвий гвинт не того кольору.
+	# І рано (перші 60% ходів): неповна коробка надовго блокує чергу коробок.
+	for i in range(1, int(order.size() * 0.6), 2):
 		var s := order[i]
 		if intro and not board.covers[s].is_empty():
 			continue
@@ -440,8 +448,15 @@ static func _place_chameleons(rng: RandomNumberGenerator, board: ScrewBoard, ord
 		var i: int = cands[n]
 		var s := order[i]
 		var col: int = board.screws[s].color
+		# Другий колір — той, чиї коробки до цього ходу вже скінчились (або скінчаться
+		# найраніше): гвинт, узятий «не в той» хід, не потрапить у жодну коробку й
+		# назавжди займе місце в лотку, а коробка його справжнього кольору лишиться неповною.
+		var last_box := {}
+		for qi in board.box_queue.size():
+			last_box[board.box_queue[qi]] = qi
 		var others := palette.keys().filter(func(c) -> bool: return c != col)
-		var other: int = others[rng.randi() % others.size()]
+		others.sort_custom(func(x, y) -> bool: return last_box[x] < last_box[y])
+		var other: int = others[0] if rng.randf() < 0.8 else others[rng.randi() % others.size()]
 		board.screws[s]["colors"] = [col, other] if i % 2 == 0 else [other, col]
 	return true
 
