@@ -17,6 +17,7 @@ var _answered := true
 func _ready() -> void:
 	super._ready()
 	close_button.hide()
+	title_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
 	_continue_button = _make_button(UiTheme.ORANGE, "ad")
 	_continue_button.icon_alignment = HORIZONTAL_ALIGNMENT_RIGHT
 	_continue_button.pressed.connect(_answer.bind("continue"))
