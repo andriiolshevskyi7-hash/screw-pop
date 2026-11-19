@@ -97,26 +97,31 @@ static func build() -> Dictionary:
 	var blocked := Synth.marimba(293.66, 0.12, 0.3)
 	Synth.mix(blocked, Synth.marimba(277.18, 0.12, 0.26), 0.08)
 	out["blocked"] = _finish(Synth.lowpass(blocked, 1800.0), 0.06, 0.15)
-	# Замкнено: глухе металеве «клац-клац».
-	var locked := Synth.lowpass(Synth.pluck(660.0, 0.08, 0.3, 0.9, 31), 3000.0)
-	Synth.mix(locked, Synth.lowpass(Synth.pluck(620.0, 0.08, 0.26, 0.9, 32), 3000.0), 0.09)
-	out["locked"] = _finish(locked, 0.06, 0.15)
-	# Замок відкрито: клацання + дзвіночок угору.
-	var unlock := Synth.silence(0.7)
-	Synth.mix(unlock, Synth.lowpass(Synth.pluck(990.0, 0.06, 0.3, 0.9, 33), 5000.0), 0.0)
-	Synth.mix(unlock, Synth.glass(1567.98, 0.5, 0.18, 0.7), 0.06)
-	Synth.mix(unlock, Synth.glass(2093.0, 0.45, 0.14, 0.6), 0.14)
-	out["unlock"] = _finish(unlock, 0.25, 0.5)
-	# Скло розбилось: шум із високими дзвінкими уламками.
-	var glass_snd := Synth.whoosh(0.35, 0.22, 7000.0, 2500.0, 41)
-	for k in 6:
-		Synth.mix(glass_snd, Synth.glass(2400.0 + k * 410.0, 0.3, 0.07, 0.5), 0.01 + k * 0.035)
-	out["glass"] = _finish(glass_snd, 0.25, 0.5)
-	# Ланцюг смикнувся: кілька металевих дзенькань.
-	var chain := Synth.silence(0.4)
-	for k in 4:
-		Synth.mix(chain, Synth.lowpass(Synth.pluck(1200.0 + k * 90.0, 0.08, 0.14, 0.92, 50 + k), 5000.0), k * 0.05)
-	out["chain"] = _finish(chain, 0.12, 0.25)
+	# Хитка пластина повертається: скрип (тон гойдається) + дерев'яний стук.
+	var swing := Synth.silence(0.6)
+	Synth.mix(swing, _sweep(320.0, 210.0, 0.35, 0.18), 0.0)
+	Synth.mix(swing, _sweep(240.0, 300.0, 0.2, 0.12), 0.3)
+	Synth.mix(swing, Synth.marimba(196.0, 0.25, 0.22), 0.05)
+	out["swing"] = _finish(Synth.lowpass(swing, 2400.0), 0.15, 0.3)
+	# Хамелеон перемкнув колір: короткий «блиск» угору-вниз.
+	var flip := Synth.silence(0.3)
+	Synth.mix(flip, Synth.glass(1760.0, 0.25, 0.1, 0.6), 0.0)
+	Synth.mix(flip, Synth.glass(1318.51, 0.25, 0.08, 0.6), 0.05)
+	out["flip"] = _finish(flip, 0.15, 0.3)
+	# Бомба: тихий «тік» на останніх ходах.
+	out["tick"] = _finish(Synth.lowpass(Synth.pluck(1975.5, 0.06, 0.24, 0.9, 61), 6000.0), 0.0, 0.0)
+	# Вибух: низький гуркіт із шумом.
+	var boom := Synth.whoosh(0.7, 0.4, 1800.0, 120.0, 62)
+	Synth.mix(boom, Synth.marimba(65.41, 0.6, 0.6), 0.0)
+	Synth.mix(boom, Synth.marimba(98.0, 0.4, 0.3), 0.02)
+	out["boom"] = _finish(Synth.lowpass(boom, 1600.0), 0.2, 0.5)
+	# Сейф відкрито: клацання механізму + дзвіночки.
+	var safe_snd := Synth.silence(0.9)
+	for k in 3:
+		Synth.mix(safe_snd, Synth.lowpass(Synth.pluck(880.0 - k * 60.0, 0.06, 0.26, 0.9, 63 + k), 4000.0), k * 0.07)
+	Synth.mix(safe_snd, Synth.glass(1567.98, 0.6, 0.18, 0.7), 0.25)
+	Synth.mix(safe_snd, Synth.glass(2093.0, 0.5, 0.14, 0.6), 0.33)
+	out["safe"] = _finish(safe_snd, 0.25, 0.5)
 	var wavs := {}
 	for key in out:
 		wavs[key] = Synth.to_wav(out[key])

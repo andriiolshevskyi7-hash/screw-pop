@@ -67,16 +67,44 @@ func _run() -> void:
 		await _shot("07_intro_%s" % m.id)
 		game._tutorial.dismiss()
 		_check(gs.is_tutorial_done(m.id), "знайомство «%s» записано" % m.id)
-		if m.id == Mechanics.LOCK:
-			for s in game.board.screw_count():
-				if game.board.is_locked(s) and not game.board.is_covered(s):
-					var before: int = game.board.screws_left()
-					game._on_screw_pressed(s)
-					_check(game.board.screws_left() == before, "замкнений гвинт не відкручується до ключа")
+		if m.id == Mechanics.SAFE:
+			_check(game.boxes[1].is_safe() and game.board.box_color[1] == ScrewBoard.SAFE, "рівень %d: одне місце закрите сейфом" % lvl)
+		if m.id == Mechanics.SWING:
+			_check(game.board.swing_plates.size() == 1, "рівень %d: одна хитка пластина" % lvl)
 		await _solve_level(true)
 		await create_timer(1.6).timeout
 		_check(win.visible, "рівень %d з механікою «%s» пройдено" % [lvl, m.id])
 		win.hide()
+	# Бомба: граємо, не чіпаючи бомбу, — вибух, вікно «+5 ходів», продовження.
+	game.start_level(Mechanics.unlock_level(Mechanics.BOMB))
+	await _wait_loaded()
+	await create_timer(1.0).timeout
+	game._tutorial.dismiss()
+	var guard_b := 0
+	while not game.lose_popup.visible and guard_b < 120:
+		guard_b += 1
+		var pick := -1
+		for s in game.board.screw_count():
+			if game.board.can_tap(s) and not game.board.is_bomb(s):
+				pick = s
+				if game.board.box_for(game.board.color_of(s)) != -1:
+					break
+		if pick == -1 or game.is_input_locked():
+			await create_timer(0.2).timeout
+			continue
+		game._on_screw_pressed(pick)
+		await _settle()
+	await create_timer(1.2).timeout
+	_check(game.board.exploded and game.lose_popup.visible, "бомба вибухнула — вікно програшу")
+	_check(game.lose_popup.title_label.text == tr("BOOM"), "вікно вибуху: «%s»" % game.lose_popup.title_label.text)
+	await _shot("09_boom")
+	game.lose_popup._answer("continue")
+	await create_timer(1.0).timeout
+	var bomb_ok := false
+	for s in game.board.screw_count():
+		if game.board.is_bomb(s) and not game.board.removed[s] and game.board.bomb_left(s) == ScrewBoard.BOMB_CONTINUE_MOVES:
+			bomb_ok = true
+	_check(bomb_ok and not game.board.exploded, "+5 ходів бомбі після реклами")
 	# Поєднання механік.
 	game.start_level(120)
 	await _wait_loaded()

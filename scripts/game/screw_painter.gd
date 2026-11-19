@@ -180,112 +180,100 @@ static func _poly(c: Vector2, r: float, n: int, start: float) -> PackedVector2Ar
 
 # --- Механіки ------------------------------------------------------------------
 
-## Кольори пар «ключ — замок» (щоб було видно, який ключ що відмикає).
-const LOCK_TINTS := ["ffc233", "d9dee8", "e0905a", "5fd3a0"]
+static var _font: Font
 
 
-static func lock_tint(pair: int) -> Color:
-	return Color(LOCK_TINTS[pair % LOCK_TINTS.size()])
+static func _num_font() -> Font:
+	if _font == null:
+		_font = UiTheme.font(900)
+	return _font
 
 
-## Навісний замок поверх головки. `open` 0…1 — дужка піднімається, замок зникає.
-static func draw_padlock(ci: CanvasItem, c: Vector2, r: float, tint: Color, open: float = 0.0) -> void:
-	var a := 1.0 - open
-	if a <= 0.0:
-		return
-	var body := Rect2(c + Vector2(-r * 0.62, -r * 0.18 + open * r * 0.6), Vector2(r * 1.24, r * 0.98))
-	var shackle_c := body.position + Vector2(r * 0.62, -open * r * 0.5)
-	ci.draw_arc(shackle_c + Vector2(0, 2), r * 0.4, PI, TAU, 16, Color(0.05, 0.1, 0.2, 0.35 * a), r * 0.2, true)
-	ci.draw_arc(shackle_c, r * 0.4, PI, TAU, 16, Color(tint.darkened(0.35), a), r * 0.2, true)
-	var sb := StyleBoxFlat.new()
-	sb.bg_color = Color(tint, a)
-	sb.set_corner_radius_all(int(r * 0.22))
-	sb.border_width_bottom = int(maxf(2.0, r * 0.12))
-	sb.border_color = Color(tint.darkened(0.3), a)
-	sb.anti_aliasing = true
-	ci.draw_style_box(sb, body)
-	var kc := body.get_center()
-	ci.draw_circle(kc - Vector2(0, r * 0.08), r * 0.14, Color(0.15, 0.1, 0.05, 0.8 * a))
-	ci.draw_line(kc - Vector2(0, r * 0.05), kc + Vector2(0, r * 0.22), Color(0.15, 0.1, 0.05, 0.8 * a), r * 0.1)
+## Текст по центру точки `c` (розмір шрифту `fs`).
+static func draw_centered(ci: CanvasItem, c: Vector2, text: String, fs: int, color: Color, outline: int = 0, outline_color: Color = Color.BLACK) -> void:
+	var f := _num_font()
+	var sz := f.get_string_size(text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs)
+	var at := c + Vector2(-sz.x / 2.0, fs * 0.36)
+	if outline > 0:
+		ci.draw_string_outline(f, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, outline, outline_color)
+	ci.draw_string(f, at, text, HORIZONTAL_ALIGNMENT_LEFT, -1, fs, color)
 
 
-## Значок ключа на головці гвинта-ключа (у правому верхньому куті).
-static func draw_key_badge(ci: CanvasItem, c: Vector2, r: float, tint: Color) -> void:
-	var o := c + Vector2(r * 0.62, -r * 0.62)
-	ci.draw_circle(o + Vector2(0, 2), r * 0.46, Color(0.05, 0.1, 0.2, 0.3))
-	ci.draw_circle(o, r * 0.46, Color.WHITE)
-	ci.draw_circle(o, r * 0.38, tint)
-	var ink := tint.darkened(0.55)
-	var w := maxf(2.0, r * 0.09)
-	ci.draw_arc(o + Vector2(-r * 0.12, 0), r * 0.12, 0, TAU, 12, ink, w, true)
-	ci.draw_line(o + Vector2(0, 0), o + Vector2(r * 0.24, 0), ink, w)
-	ci.draw_line(o + Vector2(r * 0.18, 0), o + Vector2(r * 0.18, r * 0.1), ink, w)
-
-
-## Прихований гвинт: сіра головка зі знаком «?».
-static var _q_font: Font
-
-
-static func draw_hidden(ci: CanvasItem, c: Vector2, r: float, lift: float = 0.0) -> void:
-	var col := Color("9aa3b5")
-	ci.draw_circle(c + Vector2(r * 0.08, r * 0.16), r, Color(0.02, 0.08, 0.2, 0.28 - lift * 0.12))
-	ci.draw_circle(c, r, col.darkened(0.3))
-	ci.draw_circle(c - Vector2(0, r * 0.07), r * 0.86, col)
-	ci.draw_colored_polygon(_ellipse(c + Vector2(0, -r * 0.36), r * 0.6, r * 0.32, 0.0), Color(col.lightened(0.35), 0.8))
-	draw_question(ci, c, r, Color.WHITE)
-
-
-## Знак «?» по центру кола радіуса `r`.
-static func draw_question(ci: CanvasItem, c: Vector2, r: float, color: Color) -> void:
-	if _q_font == null:
-		_q_font = UiTheme.font(900)
-	var fs := int(r * 1.2)
-	var w := _q_font.get_string_size("?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-	ci.draw_string(_q_font, c + Vector2(-w / 2.0, r * 0.42), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, color)
-
-
-## Скляна пластина: прозоре блакитне скло з білими відблисками.
-static func draw_glass_plate(ci: CanvasItem, shape: String, size: Vector2, holes: Array, r: float, rot: float, alpha: float = 1.0) -> void:
-	var outline := plate_outline(shape, size)
-	var down := Vector2(0, 1).rotated(-rot)
-	ci.draw_colored_polygon(_offset(outline, down * 10.0), Color(0.02, 0.08, 0.2, 0.12 * alpha))
-	ci.draw_colored_polygon(outline, Color(0.82, 0.95, 1.0, 0.42 * alpha))
-	var inner := _scaled(outline, size, 10.0)
-	if inner.size() > 2:
-		ci.draw_colored_polygon(inner, Color(1, 1, 1, 0.12 * alpha))
-	# Діагональні відблиски.
-	var half := size * 0.5
+## Гвинт-хамелеон: головка поточного кольору, широке кільце — колір після ходу,
+## дві стрілочки «обміну» на кільці. Видно обидва кольори.
+static func draw_chameleon(ci: CanvasItem, c: Vector2, r: float, current: int, next: int, angle: float = 0.0, lift: float = 0.0) -> void:
+	var ring := color_of(next)
+	ci.draw_circle(c + Vector2(r * 0.1, r * 0.2), r * 1.12, Color(0.02, 0.08, 0.2, 0.28 - lift * 0.12))
+	ci.draw_circle(c, r * 1.12, ring.darkened(0.3))
+	ci.draw_circle(c - Vector2(0, r * 0.05), r * 1.04, ring)
+	# Стрілки обміну на кільці (білі дуги з наконечниками).
 	for k in 2:
-		var x := -half.x * 0.5 + k * half.x * 0.35
-		ci.draw_line(Vector2(x, half.y * 0.7), Vector2(x + half.y * 0.9, -half.y * 0.7), Color(1, 1, 1, 0.5 * alpha), 5.0 - k * 2.0, true)
-	var loop := outline.duplicate()
-	loop.append(outline[0])
-	ci.draw_polyline(loop, Color(0.9, 0.98, 1.0, 0.95 * alpha), 4.0, true)
-	for h in holes:
-		draw_hole(ci, h, r * 1.02, alpha * 0.8)
+		var a0 := PI * k + 0.35
+		var a1 := a0 + PI * 0.55
+		ci.draw_arc(c, r * 0.99, a0, a1, 10, Color(1, 1, 1, 0.9), r * 0.09, true)
+		var tip := c + Vector2.from_angle(a1) * r * 0.99
+		var dir := Vector2.from_angle(a1 + PI / 2.0)
+		ci.draw_colored_polygon(PackedVector2Array([tip + dir * r * 0.16, tip + dir.orthogonal() * r * 0.13, tip - dir.orthogonal() * r * 0.13]), Color(1, 1, 1, 0.9))
+	draw_screw(ci, c, r * 0.8, current, angle, lift)
 
 
-## Ланцюг між двома точками: ланки з темнішим контуром.
-static func draw_chain(ci: CanvasItem, from: Vector2, to: Vector2, alpha: float = 1.0, jiggle: float = 0.0) -> void:
-	var d := to - from
-	var len := d.length()
-	if len < 1.0:
-		return
-	var dir := d / len
-	var n := maxi(2, int(len / 26.0))
-	var nrm := dir.orthogonal()
-	var col := Color("b8c2d4")
-	for i in n + 1:
-		var t := float(i) / n
-		var p := from.lerp(to, t) + nrm * sin(t * PI) * jiggle
-		var horizontal := i % 2 == 0
-		var ang := dir.angle() + (0.0 if horizontal else PI / 2.0)
-		var pts := _ellipse(p, 15.0 if horizontal else 9.0, 8.0 if horizontal else 13.0, ang if horizontal else dir.angle(), 14)
-		var loop := pts.duplicate()
-		loop.append(pts[0])
-		ci.draw_polyline(loop, Color(0.2, 0.25, 0.35, 0.8 * alpha), 7.0, true)
-		ci.draw_polyline(loop, Color(col, alpha), 4.0, true)
-	# Кріплення на кінцях.
-	for e in [from, to]:
-		ci.draw_circle(e, 11.0, Color(0.2, 0.25, 0.35, 0.8 * alpha))
-		ci.draw_circle(e, 8.0, Color(col.lightened(0.2), alpha))
+## Бомба на головці: темне кільце-корпус і гніт з іскрою.
+static func draw_bomb_ring(ci: CanvasItem, c: Vector2, r: float) -> void:
+	ci.draw_arc(c, r * 1.04, 0, TAU, 32, Color(0.12, 0.12, 0.16, 0.95), r * 0.2, true)
+	var base := c + Vector2(r * 0.7, -r * 0.7)
+	ci.draw_line(base, base + Vector2(r * 0.22, -r * 0.25), Color(0.55, 0.42, 0.25), r * 0.1)
+	ci.draw_circle(base + Vector2(r * 0.26, -r * 0.3), r * 0.13, Color("ffc233"))
+
+
+## Лічильник бомби (малюється над пластинами — його видно завжди): великий
+## червоний кружок з числом ходів; `pulse` 0…1 — збільшення й світіння (на ≤ 3).
+static func draw_bomb_counter(ci: CanvasItem, c: Vector2, r: float, left: int, pulse: float) -> void:
+	var at := c + Vector2(0, -r * 1.25)
+	var rr := r * (0.78 + 0.25 * pulse)
+	var hot := left <= 3
+	var col := Color("e5383b") if hot else Color("2a1f5c")
+	if pulse > 0.0:
+		ci.draw_circle(at, rr * 1.5, Color(1.0, 0.3, 0.2, 0.35 * pulse))
+	ci.draw_circle(at + Vector2(0, 3), rr, Color(0.02, 0.08, 0.2, 0.3))
+	ci.draw_circle(at, rr, Color.WHITE)
+	ci.draw_circle(at, rr * 0.82, col)
+	draw_centered(ci, at, str(left), int(rr * 1.2), Color.WHITE)
+
+
+## Сейф на місці коробки: сталеві дверцята з кольоровою міткою (якого кольору
+## коробку заповнити) і колесом-ручкою. `open` 0…1 — дверцята відчиняються.
+static func draw_safe(ci: CanvasItem, rect: Rect2, color_index: int, open: float = 0.0) -> void:
+	var radius := rect.size.y * 0.24
+	_round_rect(ci, Rect2(rect.position + Vector2(0, 10), rect.size), radius, Color(0.02, 0.08, 0.2, 0.18))
+	_round_rect(ci, Rect2(rect.position + Vector2(0, 7), rect.size), radius, Color("5b6474"))
+	_round_rect(ci, rect, radius, Color("8a94a6"))
+	# Дверцята «від'їжджають» убік, коли сейф відкривається.
+	var door := Rect2(rect.position + Vector2(10 + open * rect.size.x * 0.7, 8), Vector2(rect.size.x - 20, rect.size.y - 16))
+	var a := 1.0 - open
+	_round_rect(ci, door, radius * 0.7, Color("aab4c4", a))
+	var col := color_of(color_index)
+	var mark := door.position + Vector2(door.size.y * 0.55, door.size.y * 0.5)
+	ci.draw_circle(mark, door.size.y * 0.36, Color(1, 1, 1, a))
+	ci.draw_circle(mark, door.size.y * 0.29, Color(col, a))
+	var wheel := door.position + Vector2(door.size.x - door.size.y * 0.6, door.size.y * 0.5)
+	ci.draw_arc(wheel, door.size.y * 0.27, 0, TAU, 20, Color(0.25, 0.28, 0.35, a), 5.0, true)
+	for k in 3:
+		var d := Vector2.from_angle(k * PI / 3.0 + open * 3.0) * door.size.y * 0.27
+		ci.draw_line(wheel - d, wheel + d, Color(0.25, 0.28, 0.35, a), 4.0)
+	# Замкова щілина посередині.
+	var mid := door.get_center() + Vector2(-door.size.y * 0.05, 0)
+	ci.draw_circle(mid, door.size.y * 0.1, Color(0.2, 0.22, 0.28, a))
+
+
+## Позначка хиткої пластини в її центрі: дуга-маятник зі стрілками в обидва боки.
+static func draw_swing_mark(ci: CanvasItem, size: Vector2, shape: String) -> void:
+	var r := minf(minf(size.x, size.y) * 0.32, 22.0)
+	var col := Color(0.16, 0.2, 0.36, 0.55)
+	ci.draw_arc(Vector2(0, -r * 0.4), r, PI * 0.2, PI * 0.8, 12, col, 4.0, true)
+	for k in 2:
+		var a := PI * (0.2 if k == 0 else 0.8)
+		var tip := Vector2(0, -r * 0.4) + Vector2.from_angle(a) * r
+		var dir := Vector2.from_angle(a + (-PI / 2.0 if k == 0 else PI / 2.0))
+		ci.draw_colored_polygon(PackedVector2Array([tip + dir * 9.0, tip + dir.orthogonal() * 6.0, tip - dir.orthogonal() * 6.0]), col)
+	ci.draw_line(Vector2(0, -r * 0.4), Vector2(0, r * 0.7), col, 3.0, true)
+	ci.draw_circle(Vector2(0, r * 0.7), 5.0, col)

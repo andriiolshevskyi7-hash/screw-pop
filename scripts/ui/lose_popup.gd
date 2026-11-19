@@ -1,6 +1,7 @@
 extends PopupBase
-## Буфер заповнився: «+1 місце в буфері» за рекламу або «Спробувати ще».
-## Використання: `var choice := await lose_popup.ask(can_continue)` → "continue" або "retry".
+## Програш: «+1 місце в буфері» (лоток повний) або «+5 ходів» (вибухнула бомба)
+## за рекламу, чи «Спробувати ще».
+## Використання: `var choice := await lose_popup.ask(can_continue, kind)` → "continue" або "retry".
 
 signal chosen(option: String)
 
@@ -37,10 +38,12 @@ func _make_button(color: Color, icon_name: String) -> Button:
 	return b
 
 
-func ask(can_continue: bool) -> String:
-	title_label.text = tr("OUT_OF_SPACE")
-	message_label.text = tr("OUT_OF_SPACE_TEXT")
-	_continue_button.text = tr("CONTINUE_SLOT")
+## `kind`: "buffer" — лоток повний (+1 місце), "bomb" — вибухнула бомба (+5 ходів).
+func ask(can_continue: bool, kind: String = "buffer") -> String:
+	var bomb := kind == "bomb"
+	title_label.text = tr("BOOM") if bomb else tr("OUT_OF_SPACE")
+	message_label.text = tr("BOOM_TEXT") if bomb else tr("OUT_OF_SPACE_TEXT")
+	_continue_button.text = tr("CONTINUE_MOVES") if bomb else tr("CONTINUE_SLOT")
 	_continue_button.visible = can_continue
 	_continue_button.disabled = false
 	_retry_button.text = tr("TRY_AGAIN")

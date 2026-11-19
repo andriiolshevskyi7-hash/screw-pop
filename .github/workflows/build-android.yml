@@ -20,7 +20,7 @@ env:
   # Після завантаження збірки в Play Console це число можна підняти.
   PLAY_LAST_VERSION_CODE: "0"
   # versionName = база + номер запуску, наприклад 0.1.5. База росте з кожним етапом розробки.
-  VERSION_NAME_BASE: "0.2"
+  VERSION_NAME_BASE: "0.3"
   # Шаблон Gradle Godot 4.3 розрахований на SDK 34; Google Play вимагає
   # target SDK 36 (з 31.08.2026), тому оновлюємо інструменти збірки.
   ANDROID_COMPILE_SDK: "36"

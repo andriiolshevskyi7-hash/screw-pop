@@ -13,6 +13,9 @@ var shown := 0
 ## Скільки гвинтів летить у цю коробку.
 var pending := 0
 var lid := 0.0
+## Сейф: колір, коробку якого треба заповнити (-1 — не сейф).
+var safe_color := -1
+var _safe_open := 0.0
 var screw_r := 24.0
 var _tween: Tween
 
@@ -24,8 +27,37 @@ func _ready() -> void:
 	pivot_offset = BOX_SIZE / 2.0
 
 
+## Місце закрите сейфом кольору `p_safe_color`.
+func set_safe(p_safe_color: int) -> void:
+	set_box(-1)
+	safe_color = p_safe_color
+	_safe_open = 0.0
+	queue_redraw()
+
+
+func is_safe() -> bool:
+	return safe_color >= 0
+
+
+## Сейф відкривається: колесо крутиться, дверцята від'їжджають.
+func open_safe() -> void:
+	if _tween:
+		_tween.kill()
+	_tween = create_tween()
+	_tween.tween_property(self, "scale", Vector2(1.1, 1.1), 0.1)
+	_tween.tween_property(self, "scale", Vector2.ONE, 0.12)
+	_tween.tween_method(func(v: float) -> void:
+		_safe_open = v
+		queue_redraw(), 0.0, 1.0, 0.4).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_IN)
+	await _tween.finished
+	safe_color = -1
+	_safe_open = 0.0
+	queue_redraw()
+
+
 func set_box(p_color: int) -> void:
 	color_index = p_color
+	safe_color = -1
 	shown = 0
 	pending = 0
 	lid = 0.0
@@ -41,6 +73,9 @@ func _box_rect() -> Rect2:
 
 func _draw() -> void:
 	var rect := _box_rect()
+	if safe_color >= 0:
+		ScrewPainter.draw_safe(self, rect, safe_color, _safe_open)
+		return
 	if color_index < 0:
 		# Коробок більше немає: напівпрозоре місце.
 		var sb := StyleBoxFlat.new()

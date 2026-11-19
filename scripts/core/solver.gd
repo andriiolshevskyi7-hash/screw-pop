@@ -1,16 +1,20 @@
 class_name Solver
 extends RefCounted
 ## Розв'язувач (пошук у глибину з пам'яттю станів). Працює лише через правила
-## ScrewBoard (can_tap / tap), тож враховує буфер і всі механіки поля.
+## ScrewBoard (can_tap / tap), тож враховує буфер, сейф, хиткі пластини (нове
+## накриття після повороту), хамелеонів (колір залежить від ходу) і бомби (термін).
 ##
-## Скорочення перебору: якщо вільний гвинт підходить до активної коробки, його
-## відкручування ніколи не шкодить (поле лише відкривається, буфер не займається),
-## тож такі ходи робляться одразу без розгалуження. Розгалуження — лише на ходах
-## у буфер.
+## Скорочення перебору: якщо вільний гвинт підходить до активної коробки і хід
+## «спокійний» (ScrewBoard.is_quiet: не повертає пластину, на полі немає хамелеонів
+## і бомб), його відкручування ніколи не шкодить — такі ходи робляться без розгалуження.
+## Інакше перебираються всі ходи, спершу — у коробки.
 
 var max_nodes := 20000
 var nodes := 0
 var aborted := false
+## Якщо задано — рівні за оцінкою ходи перебираються у випадковому порядку
+## (генератор шукає кілька різних розв'язків «сліпої» моделі).
+var rng: RandomNumberGenerator
 var _seen := {}
 var _moves := PackedInt32Array()
 
@@ -37,11 +41,26 @@ static func min_buffer(board: ScrewBoard, max_cap: int = ScrewBoard.BUFFER_SIZE,
 	return -1
 
 
+## Програє ходи за правилами поля: чи привели вони до перемоги.
+static func replay(board: ScrewBoard, moves: PackedInt32Array) -> bool:
+	var b := board.clone()
+	for s in moves:
+		if not b.can_tap(s):
+			return false
+		b.tap(s)
+		if b.exploded:
+			return false
+	return b.is_won()
+
+
 func _dfs(b: ScrewBoard) -> bool:
 	var mark := _moves.size()
 	_play_forced(b)
 	if b.is_won():
 		return true
+	if b.exploded:
+		_moves.resize(mark)
+		return false
 	var key := b.state_key()
 	if _seen.has(key):
 		_moves.resize(mark)
@@ -50,9 +69,6 @@ func _dfs(b: ScrewBoard) -> bool:
 	nodes += 1
 	if nodes > max_nodes:
 		aborted = true
-		_moves.resize(mark)
-		return false
-	if b.buffer_free() == 0:
 		_moves.resize(mark)
 		return false
 	for s in _ordered_candidates(b):
@@ -68,37 +84,43 @@ func _dfs(b: ScrewBoard) -> bool:
 	return false
 
 
-## Відкручує всі вільні гвинти, що підходять до коробок (повторно, поки є).
+## Відкручує всі вільні «спокійні» гвинти, що підходять до коробок (повторно, поки є).
 func _play_forced(b: ScrewBoard) -> void:
 	var again := true
 	while again:
 		again = false
 		for s in b.screw_count():
-			if b.is_free(s) and b.box_for(b.color_of(s)) != -1:
+			if b.is_free(s) and b.is_quiet(s) and b.box_for(b.color_of(s)) != -1:
 				b.tap(s)
 				_moves.append(s)
 				again = true
 
 
-## Кандидати в буфер — спершу ті, що відкривають поле або скоро знадобляться.
+## Кандидати: спершу ходи в коробки, потім у буфер — ті, що відкривають поле,
+## скоро знадобляться або рятують бомбу.
 func _ordered_candidates(b: ScrewBoard) -> Array:
 	var scored := []
-	var seen_colors_plates := {}
+	var seen_dup := {}
+	var dyn := b._dyn_left > 0
 	for s in b.screw_count():
-		if not b.is_free(s):
+		if not b.can_tap(s):
 			continue
 		var color := b.color_of(s)
 		var p: int = b.screws[s].plate
-		# Однакові за кольором гвинти однієї пластини взаємозамінні — лишаємо один.
-		var dup := "%d:%d:%d" % [p, color, s if b.is_key(s) else -1]
-		if seen_colors_plates.has(dup):
-			continue
-		seen_colors_plates[dup] = true
+		# Однакові за кольором звичайні гвинти однієї пластини взаємозамінні — лишаємо один.
+		if not dyn and not b.swing[p]:
+			var dup := "%d:%d" % [p, color]
+			if seen_dup.has(dup):
+				continue
+			seen_dup[dup] = true
 		var score := 0.0
+		if b.box_for(color) != -1:
+			score += 20.0
 		if b.plate_left[p] == 1:
 			score += 6.0  # пластина впаде й щось відкриє
 		score -= float(b.plate_left[p])
-		# Наскільки скоро колір з'явиться в черзі коробок.
+		if b.is_bomb(s):
+			score += 30.0 / maxf(1.0, float(b.bomb_left(s)))
 		var dist := 99
 		for i in range(b.next_box, b.box_queue.size()):
 			if b.box_queue[i] == color:
@@ -107,6 +129,8 @@ func _ordered_candidates(b: ScrewBoard) -> Array:
 		score -= dist * 1.5
 		if b.buffer.has(color):
 			score += 2.0
+		if rng:
+			score += rng.randf() * 3.0
 		scored.append([score, s])
 	scored.sort_custom(func(a, c) -> bool: return a[0] > c[0])
 	var out := []
@@ -115,28 +139,34 @@ func _ordered_candidates(b: ScrewBoard) -> Array:
 	return out
 
 
-## Частка успіхів «звичайного гравця»: він завжди кладе гвинт у коробку,
-## якщо може, інакше відкручує випадковий вільний гвинт. Міра легкості рівня.
+## Частка успіхів «звичайного гравця»: рятує бомбу, коли лишилось ≤ 3 ходи,
+## кладе гвинт у коробку, якщо може, інакше відкручує випадковий вільний гвинт.
+## Міра легкості рівня.
 static func casual_success_rate(board: ScrewBoard, runs: int, seed_value: int) -> float:
-	var rng := RandomNumberGenerator.new()
-	rng.seed = seed_value
+	var r := RandomNumberGenerator.new()
+	r.seed = seed_value
 	var wins := 0
-	for r in runs:
+	for run in runs:
 		var b := board.clone()
-		while not b.is_won():
+		while not b.is_won() and not b.exploded:
+			var urgent := -1
 			var to_box := PackedInt32Array()
 			var any := PackedInt32Array()
 			for s in b.screw_count():
-				if not b.is_free(s):
+				if not b.can_tap(s):
 					continue
+				if b.is_bomb(s) and b.bomb_left(s) <= 3:
+					urgent = s
 				if b.box_for(b.color_of(s)) != -1:
 					to_box.append(s)
-				elif b.buffer_free() > 0:
+				else:
 					any.append(s)
-			if not to_box.is_empty():
-				b.tap(to_box[rng.randi() % to_box.size()])
+			if urgent != -1:
+				b.tap(urgent)
+			elif not to_box.is_empty():
+				b.tap(to_box[r.randi() % to_box.size()])
 			elif not any.is_empty():
-				b.tap(any[rng.randi() % any.size()])
+				b.tap(any[r.randi() % any.size()])
 			else:
 				break
 		if b.is_won():

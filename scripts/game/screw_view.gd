@@ -2,8 +2,11 @@ class_name ScrewView
 extends Node2D
 ## Гвинт на пластині (дочірній вузол PlateView, локальні координати пластини).
 ## Сам гвинт не повертається разом з пластиною — шліц завжди «рівний» на екрані.
-## Анімації (трясіння, «підстрибування», відкручування) вмикають `_process`
-## лише на свій час.
+## Анімації (трясіння, «підстрибування», відкручування, перемикання хамелеона,
+## пульс бомби) — твіни або `_process` лише на свій час.
+
+## Лічильник бомби змінився чи пульсує — шар лічильників над пластинами перемальовується.
+signal bomb_changed
 
 var index := -1
 var color_index := 0
@@ -11,16 +14,18 @@ var radius := ScrewBoard.SCREW_R
 ## Поворот шліца (відкручування крутить його).
 var spin := 0.0
 var lift := 0.0
-## Механіки: замок (пара — для кольору замка/ключа), ключ, прихований колір.
-var locked := false
-var lock_pair := -1
-var key_pair := -1
-var masked := false
-var _open := 0.0
+## Хамелеон: другий колір (-1 — звичайний гвинт), що з'явиться після ходу.
+var other_color := -1
+## Колір, до якого вже йде (чи прийшла) анімація перемикання.
+var target_color := -1
+## Бомба: ходів до вибуху (0 — не бомба).
+var bomb := 0
+var _bomb_pulse := 0.0
 var _flip := 1.0
 var _shake_t := -1.0
 var _shake_dir := Vector2.RIGHT
 var _tween: Tween
+var _fx_tween: Tween
 
 
 ## Godot вмикає `_process` при вході в дерево, якщо він визначений, — вимикаємо,
@@ -43,39 +48,56 @@ func _draw() -> void:
 	if _shake_t >= 0.0:
 		offset = _shake_dir * sin(_shake_t * 60.0) * 6.0 * (1.0 - _shake_t / 0.32)
 	draw_set_transform(offset, -get_parent().rotation, Vector2(absf(_flip), 1.0))
-	if masked or _flip < 0.0:
-		ScrewPainter.draw_hidden(self, Vector2.ZERO, radius, lift)
+	if other_color >= 0:
+		ScrewPainter.draw_chameleon(self, Vector2.ZERO, radius, color_index, other_color, spin, lift)
 	else:
 		ScrewPainter.draw_screw(self, Vector2.ZERO, radius, color_index, spin, lift)
-		if key_pair >= 0:
-			ScrewPainter.draw_key_badge(self, Vector2.ZERO, radius, ScrewPainter.lock_tint(key_pair))
-	if lock_pair >= 0 and (locked or _open > 0.0):
-		ScrewPainter.draw_padlock(self, Vector2.ZERO, radius, ScrewPainter.lock_tint(lock_pair), _open)
+	if bomb > 0:
+		ScrewPainter.draw_bomb_ring(self, Vector2.ZERO, radius)
 	draw_set_transform(Vector2.ZERO, 0.0, Vector2.ONE)
 
 
-## Замок відкрито: дужка піднімається, замок зникає.
-func unlock() -> void:
-	locked = false
-	var tw := create_tween()
-	tw.tween_method(func(v: float) -> void:
-		_open = v
-		queue_redraw(), 0.0, 1.0, 0.45).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
-	tw.tween_callback(func() -> void:
-		_open = 0.0
-		lock_pair = -1
-		queue_redraw())
-	pop()
+## Пульс лічильника бомби (0…1) для шару лічильників.
+func bomb_pulse() -> float:
+	return _bomb_pulse
 
 
-## «?» перевертається й показує колір.
-func reveal() -> void:
-	masked = false
-	var tw := create_tween()
-	tw.tween_method(func(v: float) -> void:
+## Хамелеон після ходу: монетка перевертається, кольори міняються місцями.
+func flip_to(current: int, next: int) -> void:
+	target_color = current
+	if _fx_tween:
+		_fx_tween.kill()
+	_fx_tween = create_tween()
+	_fx_tween.tween_method(func(v: float) -> void:
 		_flip = v
-		queue_redraw(), -1.0, 1.0, 0.4).set_trans(Tween.TRANS_SINE)
-	pop()
+		queue_redraw(), 1.0, 0.0, 0.12).set_trans(Tween.TRANS_SINE).set_ease(Tween.EASE_IN)
+	_fx_tween.tween_callback(func() -> void:
+		color_index = current
+		other_color = next)
+	_fx_tween.tween_method(func(v: float) -> void:
+		_flip = v
+		queue_redraw(), 0.0, 1.0, 0.16).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
+
+
+## Новий лічильник бомби; на 3 і менше — помітний пульс (двічі, не постійно).
+func set_bomb(left: int, animate: bool = true) -> void:
+	var changed := left != bomb
+	bomb = left
+	queue_redraw()
+	bomb_changed.emit()
+	if not changed or not animate or left > 3:
+		return
+	if _fx_tween:
+		_fx_tween.kill()
+	_fx_tween = create_tween()
+	for k in 2:
+		_fx_tween.tween_method(_set_pulse, 0.0, 1.0, 0.16).set_trans(Tween.TRANS_SINE)
+		_fx_tween.tween_method(_set_pulse, 1.0, 0.0, 0.22).set_trans(Tween.TRANS_SINE)
+
+
+func _set_pulse(v: float) -> void:
+	_bomb_pulse = v
+	bomb_changed.emit()
 
 
 ## Легке трясіння: гвинт накритий пластиною, відкрутити не можна.
@@ -106,6 +128,8 @@ func pop() -> void:
 func unscrew(duration: float) -> Tween:
 	if _tween:
 		_tween.kill()
+	bomb = 0
+	bomb_changed.emit()
 	_tween = create_tween().set_parallel(true)
 	_tween.tween_method(func(v: float) -> void:
 		spin = v

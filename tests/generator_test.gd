@@ -45,20 +45,25 @@ func _initialize() -> void:
 		# Механіки: стільки, скільки задано, не раніше свого рівня; на рівні знайомства — лише нова.
 		var found := {}
 		for pl in board.plates:
-			if pl.get("glass", false):
-				found["glass"] = int(found.get("glass", 0)) + 1
-			if int(pl.get("chain", -1)) >= 0:
-				found["chain"] = int(found.get("chain", 0)) + 1
+			if pl.get("swing", false):
+				found["swing"] = int(found.get("swing", 0)) + 1
 		for sc in board.screws:
-			if int(sc.get("lock", -1)) >= 0:
-				found["lock"] = int(found.get("lock", 0)) + 1
-			if sc.get("hidden", false):
-				found["hidden"] = int(found.get("hidden", 0)) + 1
-		if found.has("chain"):
-			found["chain"] = found["chain"] / 2
+			if (sc.get("colors", []) as Array).size() == 2:
+				found["chameleon"] = int(found.get("chameleon", 0)) + 1
+			if int(sc.get("bomb", 0)) > 0:
+				found["bomb"] = int(found.get("bomb", 0)) + 1
+		if not board.safe.is_empty():
+			found["safe"] = 1
 		if found != g.params.mech:
 			print("   MECHANICS MISMATCH want %s got %s" % [g.params.mech, found])
 			failed = true
+		# Механіку не можна проігнорувати: розв'язки моделі без неї не проходять рівень.
+		if not found.is_empty():
+			var rng := RandomNumberGenerator.new()
+			rng.seed = level * 7 + 3
+			if not LevelGenerator.mechanics_matter(board, found.keys(), rng):
+				print("   MECHANIC CAN BE IGNORED ", found)
+				failed = true
 		for m in Mechanics.LIST:
 			if found.has(m.id) and level < int(m.from):
 				print("   MECHANIC %s BEFORE LEVEL %d" % [m.id, m.from])

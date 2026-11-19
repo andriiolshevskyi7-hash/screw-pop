@@ -11,6 +11,10 @@ extends RefCounted
 ##    міняються місцями між близькими трійками («перемішування») — з'являється потреба в буфері.
 ## 3. Розв'язувач перевіряє, що рівень проходиться з буфером, меншим за справжній
 ##    (запас для гравця), а симуляція «звичайного гравця» — що складність у потрібних межах.
+## 4. Механіки мусять впливати на розв'язок: для кожної механіки рівня розв'язувач кілька
+##    разів (з різним порядком перебору) розв'язує «сліпу» модель, де механіки немає, і
+##    кожен такий розв'язок програється за справжніми правилами. Якщо хоч один спрацьовує —
+##    механіку можна проігнорувати, і рівень відкидається.
 ## Рівні детерміновані: той самий номер дає той самий розклад.
 
 const BOARD_W := 600.0
@@ -92,13 +96,25 @@ static func generate(level: int, seed_value: int) -> Dictionary:
 	rng.seed = seed_value
 	var best: Dictionary = {}
 	var best_err := INF
-	var attempts := ATTEMPTS * (2 if params.mech.size() > 1 else 1)
-	for attempt in attempts:
+	var attempts := ATTEMPTS * (2 if not params.mech.is_empty() else 1)
+	# Невдалі розклади (механіку нікуди поставити) дешеві — їх не рахуємо як спробу,
+	# але загальну кількість обмежуємо.
+	var attempt := -1
+	var builds := 0
+	while attempt < attempts - 1 and builds < attempts * 12:
+		builds += 1
 		var board := _build(rng, params)
 		if board == null:
 			continue
-		var res := Solver.new().solve(_with_cap(board, int(params.cap)), 8000)
+		attempt += 1
+		var res := Solver.new().solve(_with_cap(board, int(params.cap)), SOLVE_BUDGET)
 		if not res.ok:
+			continue
+		if params.mech.has(Mechanics.BOMB):
+			res = _place_bombs(rng, board, int(params.mech[Mechanics.BOMB]), int(params.cap), res.moves)
+			if not res.ok:
+				continue
+		if not mechanics_matter(board, params.mech.keys(), rng):
 			continue
 		var rate := Solver.casual_success_rate(board, CASUAL_RUNS, seed_value + attempt)
 		var lo: float = params.rate[0]
@@ -111,7 +127,50 @@ static func generate(level: int, seed_value: int) -> Dictionary:
 			break
 	if best.is_empty():
 		best = _fallback(rng, params)
+	# Крайній випадок: менше механік (рівень має бути завжди — гра не може «зависнути»).
+	while best.is_empty() and not params.mech.is_empty():
+		var fewer := params.duplicate(true)
+		for id in fewer.mech.keys():
+			fewer.mech[id] = int(fewer.mech[id]) - 1
+			if fewer.mech[id] <= 0:
+				fewer.mech.erase(id)
+		push_warning("LevelGenerator: рівень %d — менше механік: %s" % [level, fewer.mech])
+		params = fewer
+		best = _fallback(rng, params)
 	return best
+
+
+## Скільки різних розв'язків «сліпої» моделі перевіряти для кожної механіки.
+const BLIND_TRIES := 3
+const SOLVE_BUDGET := 8000
+const BLIND_BUDGET := 4000
+
+
+## Чи кожну з механік `ids` не можна проігнорувати: розв'язки моделі без неї
+## (кілька, з різним порядком перебору) за справжніми правилами не проходять рівень.
+## Розв'язок шукається з повним буфером — найсильніший «сліпий» гравець.
+static func mechanics_matter(board: ScrewBoard, ids: Array, rng: RandomNumberGenerator) -> bool:
+	for id in ids:
+		if not _blind_solutions(board, {id: true}, rng).all(func(m) -> bool: return not Solver.replay(board, m)):
+			return false
+	return true
+
+
+## Розв'язки «сліпої» моделі (без механік із `blind`). Порожній список — сліпа модель
+## нерозв'язна (отже, проігнорувати механіки точно не вийде).
+static func _blind_solutions(board: ScrewBoard, blind: Dictionary, rng: RandomNumberGenerator) -> Array:
+	var b := board.clone()
+	b.blind = blind
+	b.reset()
+	var out := []
+	for i in BLIND_TRIES:
+		var solver := Solver.new()
+		if i > 0:
+			solver.rng = rng
+		var res := solver.solve(b, BLIND_BUDGET)
+		if res.ok:
+			out.append(res.moves)
+	return out
 
 
 static func _with_cap(board: ScrewBoard, cap: int) -> ScrewBoard:
@@ -124,9 +183,18 @@ static func _with_cap(board: ScrewBoard, cap: int) -> ScrewBoard:
 static func _fallback(rng: RandomNumberGenerator, params: Dictionary) -> Dictionary:
 	var easy := params.duplicate()
 	easy.mix = 0.0
-	for i in 50:
+	for i in 80:
 		var board := _build(rng, easy)
-		if board != null and Solver.new().solve(board, 8000).ok:
+		if board == null:
+			continue
+		var res := Solver.new().solve(board, SOLVE_BUDGET)
+		if not res.ok:
+			continue
+		if easy.mech.has(Mechanics.BOMB):
+			res = _place_bombs(rng, board, int(easy.mech[Mechanics.BOMB]), ScrewBoard.BUFFER_SIZE, res.moves)
+			if not res.ok:
+				continue
+		if mechanics_matter(board, easy.mech.keys(), rng):
 			return {"board": board.to_dict(), "params": params, "stats": {"rate": 1.0, "attempt": -1}}
 	push_error("LevelGenerator: не вдалося згенерувати рівень %d" % params.level)
 	return {}
@@ -184,13 +252,14 @@ static func _half_extent(shape: String, size: Vector2, rot: float) -> Vector2:
 ## Будує поле без кольорів (кольори — у _colorize). null — не вдалося.
 static func _build(rng: RandomNumberGenerator, params: Dictionary) -> ScrewBoard:
 	var target: int = params.screws
+	var main_target := target
 	var plates: Array = []
 	var screws: Array = []
 	var tries := 0
 	# Компактна область: чим менше гвинтів, тим менша, щоб пластини лягали одна на одну.
 	var k := clampf(sqrt(float(target) / 42.0), 0.62, 1.0)
 	var region := Rect2(Vector2(BOARD_W, BOARD_H) * (1.0 - k) * 0.5, Vector2(BOARD_W, BOARD_H) * k)
-	while screws.size() < target and tries < 900:
+	while screws.size() < main_target and tries < 900:
 		tries += 1
 		var tpl := _template(rng, plates.size() < 2 and target >= 15)
 		var rot := 0.0
@@ -244,7 +313,7 @@ static func _build(rng: RandomNumberGenerator, params: Dictionary) -> ScrewBoard
 		for s in screws:
 			if s.plate == p:
 				on_plate += 1
-		if on_plate >= (3 if guard < 100 else 2):
+		if on_plate >= (3 if guard < 100 else 2) and not plates[p].get("swing", false):
 			screws.remove_at(i)
 	if screws.size() % 3 != 0:
 		return null
@@ -255,28 +324,29 @@ static func _build(rng: RandomNumberGenerator, params: Dictionary) -> ScrewBoard
 	board.setup()
 	var mech: Dictionary = params.get("mech", {})
 	var intro: bool = params.get("intro", false)
-	if mech.has(Mechanics.GLASS) or mech.has(Mechanics.CHAIN):
-		if not _place_glass(rng, board, int(mech.get(Mechanics.GLASS, 0)), intro):
-			return null
-		if not _place_chains(rng, board, int(mech.get(Mechanics.CHAIN, 0)), intro):
+	if mech.has(Mechanics.SWING):
+		if not _place_swings(rng, board, int(mech[Mechanics.SWING])):
 			return null
 		board.setup()
 	var order := _colorize(rng, board, params)
 	if order.is_empty():
 		return null
-	if mech.has(Mechanics.LOCK):
-		if not _place_locks(rng, board, order, int(mech[Mechanics.LOCK]), intro):
+	if mech.has(Mechanics.CHAMELEON):
+		if not _place_chameleons(rng, board, order, int(mech[Mechanics.CHAMELEON]), intro):
 			return null
-	if mech.has(Mechanics.HIDDEN):
-		if not _place_hidden(rng, board, order, int(mech[Mechanics.HIDDEN]), intro):
+	if mech.has(Mechanics.SAFE):
+		if board.box_queue.size() < 3:
 			return null
+		# Сейф відкривається 3-ю або 4-ю коробкою: доти працює лише одна коробка.
+		var opener := 2 if intro else rng.randi_range(2, mini(3, board.box_queue.size() - 1))
+		board.safe = {"slot": 1, "color": board.box_queue[opener]}
 	board.setup()
 	return board
 
 
 # --- Механіки ----------------------------------------------------------------
 
-## Чи всі гвинти пластини відкриті на початку (видно, як вона розіб'ється/впаде).
+## Чи всі гвинти пластини відкриті на початку (видно, як вона поведеться).
 static func _plate_open(board: ScrewBoard, p: int) -> bool:
 	for s in board.plate_screws[p]:
 		if not board.covers[s].is_empty():
@@ -284,144 +354,127 @@ static func _plate_open(board: ScrewBoard, p: int) -> bool:
 	return true
 
 
-## Скляні пластини: з ≥ 2 гвинтами. На рівні знайомства — відкрита пластина, що щось накриває.
-static func _place_glass(rng: RandomNumberGenerator, board: ScrewBoard, count: int, intro: bool) -> bool:
-	if count <= 0:
-		return true
-	var cands := []
+## Хиткі пластини: ≥ 2 гвинти, на кожному можливому останньому гвинті пластина звисає
+## в межах поля і чітко накриває/оминає гвинти нижчих шарів (без «ледь зачепила»).
+## На рівні знайомства — відкрита пластина. Вплив на розв'язок перевіряє mechanics_matter.
+## Хиткі пластини. Поворот має вплив, лише якщо пластина довго висить: тому
+## обирається пластина, у якої гвинт-«вісь» k накритий вищою пластиною (його не
+## відкрутиш одразу), а звисаючи на ньому, вона накриває нові гвинти нижчих шарів.
+## Решта гвинтів пластини — відкриті, тож гравець вирішує, коли їх знімати.
+## Чи справді механіку не можна проігнорувати, перевіряє mechanics_matter.
+static func _place_swings(rng: RandomNumberGenerator, board: ScrewBoard, count: int) -> bool:
+	var scored := []
 	for p in board.plates.size():
-		if board.plate_screws[p].size() < 2:
-			continue
-		if intro:
-			var covers_any := false
-			for s in board.screw_count():
-				if board.covers[s].has(p):
-					covers_any = true
-			if not (_plate_open(board, p) and covers_any):
+		var score := _swing_score(board, p)
+		if score > 0:
+			scored.append([score + rng.randf(), p])
+	if scored.size() < count:
+		return false
+	scored.sort_custom(func(x, y) -> bool: return x[0] > y[0])
+	for i in count:
+		board.plates[scored[i][1]]["swing"] = true
+	return true
+
+
+## Скільки нових гвинтів накриває пластина, звисаючи на накритому гвинті (0 — не годиться).
+static func _swing_score(board: ScrewBoard, p: int) -> int:
+	if board.plate_screws[p].size() < 2:
+		return 0
+	var plate: Dictionary = board.plates[p]
+	var best := 0
+	for k in board.plate_screws[p]:
+		var pose := ScrewBoard.swing_pose(plate, board.screws[k].pos)
+		if pose.is_empty():
+			return 0
+		var hung: Dictionary = plate.duplicate()
+		hung.pos = pose.pos
+		hung.rot = pose.rot
+		var he := _half_extent(hung.shape, hung.size, hung.rot)
+		if hung.pos.y + he.y > BOARD_H + 90.0 or hung.pos.x - he.x < -20.0 or hung.pos.x + he.x > BOARD_W + 20.0:
+			return 0
+		var newly := 0
+		for s in board.screw_count():
+			if int(board.screws[s].plate) >= p:
 				continue
-		cands.append(p)
+			var d := ScrewBoard.shape_distance(hung, board.screws[s].pos)
+			if d > R - 12.0 and d < R + 8.0:
+				return 0
+			if d < R - 2.0 and not board.covers[s].has(p):
+				newly += 1
+		# Вісь накрита, а хоч один інший гвинт пластини відкритий.
+		var others_open := false
+		for o in board.plate_screws[p]:
+			if o != k and board.covers[o].is_empty():
+				others_open = true
+		if not board.covers[k].is_empty() and others_open:
+			best = maxi(best, newly)
+	return best
+
+
+## Хамелеони: у знайденому порядку гвинт на позиції i відкручується ходом i, тож його
+## колір на цьому ході (a — на парному, b — на непарному) — той, під який підібрано
+## трійку; другий колір — інший колір рівня. Узяти хамелеона «не в той» хід — зайвий
+## гвинт не того кольору (тиск на буфер і коробки).
+static func _place_chameleons(rng: RandomNumberGenerator, board: ScrewBoard, order: PackedInt32Array, count: int, intro: bool) -> bool:
+	var palette := {}
+	for c in board.box_queue:
+		palette[c] = true
+	if palette.size() < 2:
+		return false
+	var cands := []
+	for i in order.size():
+		var s := order[i]
+		if intro and not board.covers[s].is_empty():
+			continue
+		cands.append(i)
 	if cands.size() < count:
 		return false
 	_shuffle(rng, cands)
-	for i in count:
-		board.plates[cands[i]]["glass"] = true
+	for n in count:
+		var i: int = cands[n]
+		var s := order[i]
+		var col: int = board.screws[s].color
+		var others := palette.keys().filter(func(c) -> bool: return c != col)
+		var other: int = others[rng.randi() % others.size()]
+		board.screws[s]["colors"] = [col, other] if i % 2 == 0 else [other, col]
 	return true
 
 
-## Ланцюги: пари пластин (не скляних), видимий відрізок ланцюга між ними не проходить
-## над жодним гвинтом. На рівні знайомства обидві пластини відкриті.
-static func _place_chains(rng: RandomNumberGenerator, board: ScrewBoard, count: int, intro: bool) -> bool:
-	if count <= 0:
-		return true
-	var used := {}
-	var pairs := []
-	for p in board.plates.size():
-		for q in range(p + 1, board.plates.size()):
-			if board.plates[p].get("glass", false) or board.plates[q].get("glass", false):
-				continue
-			if intro and not (_plate_open(board, p) and _plate_open(board, q)):
-				continue
-			var d: float = (board.plates[p].pos as Vector2).distance_to(board.plates[q].pos)
-			if d < 140.0 or d > 400.0:
-				continue
-			if chain_segment(board.plates[p], board.plates[q]).is_empty():
-				continue
-			if not _chain_clear(board, p, q):
-				continue
-			pairs.append([p, q])
-	_shuffle(rng, pairs)
-	var placed := 0
-	for pair in pairs:
-		if placed >= count:
-			break
-		if used.has(pair[0]) or used.has(pair[1]):
-			continue
-		used[pair[0]] = true
-		used[pair[1]] = true
-		board.plates[pair[0]]["chain"] = pair[1]
-		board.plates[pair[1]]["chain"] = pair[0]
-		placed += 1
-	return placed == count
-
-
-## Видима частина ланцюга між центрами двох пластин — відрізок поза обома пластинами
-## ([] — пластини надто перекриваються).
-static func chain_segment(a: Dictionary, b: Dictionary) -> Array:
-	var pa: Vector2 = a.pos
-	var pb: Vector2 = b.pos
-	var t0 := -1.0
-	var t1 := -1.0
-	for i in 41:
-		var t := i / 40.0
-		var pt := pa.lerp(pb, t)
-		if ScrewBoard.shape_distance(a, pt) > 4.0 and ScrewBoard.shape_distance(b, pt) > 4.0:
-			if t0 < 0.0:
-				t0 = t
-			t1 = t
-	if t0 < 0.0:
-		return []
-	# Ланцюг заходить трохи на пластини (до кріплення).
-	var from := pa.lerp(pb, maxf(0.0, t0 - 0.06))
-	var to := pa.lerp(pb, minf(1.0, t1 + 0.06))
-	if from.distance_to(to) < 50.0:
-		return []
-	return [from, to]
-
-
-static func _chain_clear(board: ScrewBoard, p: int, q: int) -> bool:
-	var seg := chain_segment(board.plates[p], board.plates[q])
-	for s in board.screws:
-		var c := Geometry2D.get_closest_point_to_segment(s.pos, seg[0], seg[1])
-		if c.distance_to(s.pos) < R + 6.0:
-			return false
-	return true
-
-
-## Замки: ключ k відкручується раніше за замкнений гвинт l у знайденому порядку, тож
-## розв'язок лишається дійсним. На рівні знайомства обидва відкриті з самого початку.
-static func _place_locks(rng: RandomNumberGenerator, board: ScrewBoard, order: PackedInt32Array, count: int, intro: bool) -> bool:
-	var pos := {}
-	for i in order.size():
-		pos[order[i]] = i
-	var used := {}
-	var placed := 0
-	for attempt in 200:
-		if placed >= count:
-			break
-		var k := rng.randi() % board.screw_count()
-		var l := rng.randi() % board.screw_count()
-		if k == l or used.has(k) or used.has(l) or pos[k] >= pos[l]:
-			continue
-		if board.screws[k].plate == board.screws[l].plate:
-			continue
-		if intro and (not board.covers[k].is_empty() or not board.covers[l].is_empty()):
-			continue
-		board.screws[l]["lock"] = k
-		used[k] = true
-		used[l] = true
-		placed += 1
-	return placed == count
-
-
-## Приховані гвинти: накриті на початку, без замка й не ключі. На рівні знайомства —
-## ті, що відкриються найраніше (гравець одразу побачить, як «?» показує колір).
-static func _place_hidden(rng: RandomNumberGenerator, board: ScrewBoard, order: PackedInt32Array, count: int, intro: bool) -> bool:
-	var keys := {}
-	for s in board.screw_count():
-		if int(board.screws[s].get("lock", -1)) >= 0:
-			keys[int(board.screws[s].lock)] = true
-	var cands := []
-	for s in order:
-		if board.covers[s].is_empty() or keys.has(s) or int(board.screws[s].get("lock", -1)) >= 0:
-			continue
-		cands.append(s)
-	if cands.size() < count:
-		return false
-	if not intro:
+## Бомби: гвинт, який «сліпі» розв'язки (без бомби) відкручують пізно; термін N —
+## на хід менший за найраніший такий розв'язок (тож жоден із них не встигає), але
+## справжній розв'язувач з терміном справляється. Повертає розв'язок з бомбами.
+static func _place_bombs(rng: RandomNumberGenerator, board: ScrewBoard, count: int, cap: int, solution: PackedInt32Array) -> Dictionary:
+	var res := {"ok": true, "moves": solution}
+	for n in count:
+		var cands := []
+		for i in range(4, res.moves.size()):
+			var s: int = res.moves[i]
+			if board.bomb_n[s] == 0 and board.cham_a[s] < 0:
+				cands.append(s)
 		_shuffle(rng, cands)
-	for i in count:
-		board.screws[cands[i]]["hidden"] = true
-	return true
+		var placed := false
+		var blind := _blind_solutions(board, {"bomb": true}, rng)
+		if blind.is_empty():
+			return {"ok": false}
+		for s in cands.slice(0, 6):
+			var earliest := 1 << 20
+			for m in blind:
+				earliest = mini(earliest, (m as PackedInt32Array).find(s) + 1)
+			var limit := earliest - 1 - rng.randi_range(0, 1)
+			if limit < 3:
+				continue
+			board.screws[s]["bomb"] = limit
+			board.setup()
+			var r := Solver.new().solve(_with_cap(board, cap), SOLVE_BUDGET)
+			if r.ok:
+				res = r
+				placed = true
+				break
+			board.screws[s].erase("bomb")
+			board.setup()
+		if not placed:
+			return {"ok": false}
+	return res
 
 
 ## Перевіряє, що гвинти не налазять один на одного, а край нової пластини не «ледь

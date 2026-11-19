@@ -15,10 +15,8 @@ var board: ScrewBoard
 var plates_root: Node2D
 var plate_views := {}
 var screw_views := {}
-## Ланцюги: номер пластини → ChainView (обидві пластини пари вказують на той самий).
-var chain_views := {}
 var board_scale := 1.0
-## Значки «?» поверх пластин над накритими прихованими гвинтами.
+## Шар над пластинами: лічильники бомб (їх видно, навіть коли бомбу накрито).
 var _marks: Node2D
 
 
@@ -56,62 +54,48 @@ func build(p_board: ScrewBoard) -> void:
 		sv.setup(s, int(sc.color), ScrewBoard.SCREW_R)
 		plate_views[int(sc.plate)].add_screw(sv, (sc.pos - plate.pos).rotated(-float(plate.rot)))
 		screw_views[s] = sv
-	# Пари «ключ — замок» мають однаковий колір замка й значка ключа.
-	var pair := 0
-	for k in board.screw_count():
-		if board.is_key(k) and not board.removed[k]:
-			screw_views[k].key_pair = pair
-			for l in board.keys_of[k]:
-				if screw_views.has(l):
-					screw_views[l].lock_pair = pair
-			pair += 1
-	for p in board.plates.size():
-		var q := board.chain_of[p]
-		if q > p and not board.plate_gone[p] and not board.plate_gone[q]:
-			var cv := ChainView.new()
-			cv.setup(p, q, LevelGenerator.chain_segment(board.plates[p], board.plates[q]))
-			plates_root.add_child(cv)
-			chain_views[p] = cv
-			chain_views[q] = cv
 	_marks = Node2D.new()
 	_marks.draw.connect(_draw_marks)
 	plates_root.add_child(_marks)
+	for sv in screw_views.values():
+		sv.bomb_changed.connect(_marks.queue_redraw)
 	refresh_states(false)
 	_fit()
 
 
-## «?» видно крізь пластину: гравець знає, що під нею схований гвинт, але не його колір.
+## Лічильники бомб поверх усіх пластин.
 func _draw_marks() -> void:
 	if board == null:
 		return
-	var r := ScrewBoard.SCREW_R * 0.55
 	for s in screw_views:
-		if screw_views[s].masked:
-			var c: Vector2 = board.screws[s].pos
-			_marks.draw_circle(c + Vector2(0, 2), r, Color(0.02, 0.08, 0.2, 0.25))
-			_marks.draw_circle(c, r, Color(1, 1, 1, 0.85))
-			ScrewPainter.draw_question(_marks, c, r, UiTheme.NAVY)
+		var sv: ScrewView = screw_views[s]
+		if sv.bomb > 0 and is_instance_valid(sv):
+			var c := plates_root.get_global_transform().affine_inverse() * sv.global_position
+			ScrewPainter.draw_bomb_counter(_marks, c, ScrewBoard.SCREW_R, sv.bomb, sv.bomb_pulse())
 
 
-## Оновлює замки й «?» за станом поля (`animate` — з анімацією відкриття).
-## Повертає {"unlocked": n, "revealed": n}.
+## Оновлює хамелеонів і лічильники бомб за станом поля (`animate` — з анімацією).
+## Повертає {"flipped": кількість хамелеонів, що змінили колір, "hot": найменший лічильник бомби}.
 func refresh_states(animate: bool = true) -> Dictionary:
-	var out := {"unlocked": 0, "revealed": 0}
+	var out := {"flipped": 0, "hot": 1 << 20}
 	if board == null:
 		return out
 	for s in screw_views:
 		var sv: ScrewView = screw_views[s]
-		var locked := board.is_locked(s)
-		if sv.locked and not locked and animate:
-			sv.unlock()
-			out.unlocked += 1
-		sv.locked = locked
-		var masked := board.is_hidden(s) and board.is_covered(s)
-		if sv.masked and not masked and animate:
-			sv.reveal()
-			out.revealed += 1
-		sv.masked = masked
-		sv.queue_redraw()
+		if board.is_chameleon(s):
+			var cur := board.color_of(s)
+			if animate and cur != sv.target_color:
+				sv.flip_to(cur, board.other_color_of(s))
+				out.flipped += 1
+			elif not animate:
+				sv.color_index = cur
+				sv.target_color = cur
+				sv.other_color = board.other_color_of(s)
+				sv.queue_redraw()
+		if board.is_bomb(s):
+			var left := board.bomb_left(s)
+			sv.set_bomb(maxi(left, 0), animate)
+			out.hot = mini(out.hot, left)
 	if is_instance_valid(_marks):
 		_marks.queue_redraw()
 	return out
@@ -127,7 +111,6 @@ func clear() -> void:
 		v.queue_free()
 	plate_views.clear()
 	screw_views.clear()
-	chain_views.clear()
 	board = null
 
 

@@ -10,27 +10,29 @@ extends RefCounted
 ## На рівні знайомства інших механік немає; старі повертаються поступово.
 ## Після передиху за останньою механікою (з 103-го рівня) механіки поєднуються.
 
-const LOCK := "lock"
-const GLASS := "glass"
-const HIDDEN := "hidden"
-const CHAIN := "chain"
+## Кожна механіка мусить змінювати порядок відкручування або тиск на буфер/коробки
+## (проігнорувати її не можна — генератор перевіряє це «сліпою» моделлю).
+const SWING := "swing"
+const CHAMELEON := "chameleon"
+const BOMB := "bomb"
+const SAFE := "safe"
 
 ## У порядку відкриття. `text` — ключ перекладу (одне речення знайомства).
 const LIST := [
-	{"id": LOCK, "from": 20, "text": "MECH_LOCK"},
-	{"id": GLASS, "from": 45, "text": "MECH_GLASS"},
-	{"id": HIDDEN, "from": 70, "text": "MECH_HIDDEN"},
-	{"id": CHAIN, "from": 95, "text": "MECH_CHAIN"},
+	{"id": SWING, "from": 20, "text": "MECH_SWING"},
+	{"id": CHAMELEON, "from": 45, "text": "MECH_CHAMELEON"},
+	{"id": BOMB, "from": 70, "text": "MECH_BOMB"},
+	{"id": SAFE, "from": 95, "text": "MECH_SAFE"},
 ]
 
 const RELIEF_LEVELS := 8
 
 ## Кількість на рівні знайомства / зростання (рівнів на +1) / межа до поєднань / межа в поєднаннях.
 const AMOUNTS := {
-	LOCK: {"intro": 1, "every": 10, "max": 3, "combo_max": 4},
-	GLASS: {"intro": 1, "every": 12, "max": 2, "combo_max": 3},
-	HIDDEN: {"intro": 2, "every": 6, "max": 6, "combo_max": 8},
-	CHAIN: {"intro": 1, "every": 20, "max": 2, "combo_max": 2},
+	SWING: {"intro": 1, "every": 12, "max": 2, "combo_max": 3},
+	CHAMELEON: {"intro": 1, "every": 15, "max": 2, "combo_max": 3},
+	BOMB: {"intro": 1, "every": 25, "max": 2, "combo_max": 2},
+	SAFE: {"intro": 1, "every": 1000, "max": 1, "combo_max": 1},
 }
 
 
@@ -46,7 +48,7 @@ static func unlock_level(id: String) -> int:
 
 
 static func combo_from() -> int:
-	return unlock_level(CHAIN) + RELIEF_LEVELS
+	return unlock_level(SAFE) + RELIEF_LEVELS
 
 
 ## Наймолодша вже відкрита механіка і скільки рівнів минуло з її відкриття (-1 — жодної).

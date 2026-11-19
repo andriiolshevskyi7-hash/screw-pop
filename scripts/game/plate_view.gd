@@ -16,9 +16,8 @@ var plate_size := Vector2.ONE
 var tint := Color.WHITE
 var holes: Array = []
 var screw_views := {}
-var is_glass := false
-## Скло розбилось: лишились лише гвинти в дошці.
-var broken := false
+## Хитка пластина (на останньому гвинті повертається й звисає вниз).
+var is_swing := false
 var base_pos := Vector2.ZERO
 var base_rot := 0.0
 
@@ -33,6 +32,14 @@ var _alpha := 1.0
 var _wobble_t := -1.0
 var _wobble_pivot := Vector2.ZERO
 var _wobble_amp := 0.0
+## Маятник хиткої пластини.
+const SWING_TIME := 1.6
+var _swing_t := -1.0
+var _swing_pivot := Vector2.ZERO
+var _swing_from_pos := Vector2.ZERO
+var _swing_from_rot := 0.0
+var _swing_delta := 0.0
+var _orig_rot := 0.0
 
 
 ## Godot вмикає `_process` при вході в дерево, якщо він визначений, — вимикаємо,
@@ -46,9 +53,10 @@ func setup(p_index: int, plate: Dictionary, p_holes: Array, screw_radius: float)
 	shape = plate.shape
 	plate_size = plate.size
 	tint = ScrewPainter.tint_of(int(plate.tint))
-	is_glass = plate.get("glass", false)
+	is_swing = plate.get("swing", false)
 	base_pos = plate.pos
 	base_rot = plate.rot
+	_orig_rot = base_rot
 	position = base_pos
 	rotation = base_rot
 	holes = p_holes
@@ -67,34 +75,32 @@ func add_screw(view: ScrewView, local_pos: Vector2) -> void:
 
 
 func _draw() -> void:
-	if broken:
-		# Гвинти, що лишились, тримаються в дошці: темне гніздо під кожним.
-		for v in screw_views.values():
-			draw_circle(v.position, _screw_r * 1.12, Color(0.03, 0.08, 0.2, 0.35))
-		return
-	if is_glass:
-		ScrewPainter.draw_glass_plate(self, shape, plate_size, holes, _screw_r, rotation, _alpha)
-	else:
-		ScrewPainter.draw_plate(self, shape, plate_size, tint, holes, _screw_r, rotation, _alpha)
+	ScrewPainter.draw_plate(self, shape, plate_size, tint, holes, _screw_r, rotation, _alpha)
+	if is_swing and _swing_t < 0.0 and base_rot == _orig_rot:
+		ScrewPainter.draw_swing_mark(self, plate_size, shape)
 
 
-## Скло розбивається на уламки, що розлітаються й падають.
-func shatter() -> void:
-	broken = true
+## Маятник: пластина повертається навколо гвинта `pivot_local` (локальні координати)
+## на кут `delta` — затухаючі коливання, що зупиняються точно у звислому положенні.
+func swing_to(pivot_local: Vector2, delta: float) -> void:
 	_wobble_t = -1.0
-	position = base_pos
-	rotation = base_rot
-	queue_redraw()
-	var fx := ShardFx.new()
-	fx.position = position
-	fx.rotation = rotation
-	get_parent().add_child(fx)
-	fx.setup(ScrewPainter.plate_outline(shape, plate_size))
+	_swing_pivot = base_pos + pivot_local.rotated(base_rot)
+	_swing_from_pos = base_pos
+	_swing_from_rot = base_rot
+	_swing_delta = delta
+	_swing_t = 0.0
+	base_rot = base_rot + delta
+	base_pos = _swing_pivot + (_swing_from_pos - _swing_pivot).rotated(delta)
+	set_process(true)
+
+
+func is_swinging() -> bool:
+	return _swing_t >= 0.0
 
 
 ## Пластина тримається на одному гвинті — коротко гойдається навколо нього.
 func wobble(pivot_local: Vector2) -> void:
-	if _falling or broken:
+	if _falling or _swing_t >= 0.0:
 		return
 	_wobble_pivot = base_pos + pivot_local.rotated(base_rot)
 	_wobble_t = 0.0
@@ -104,6 +110,10 @@ func wobble(pivot_local: Vector2) -> void:
 
 ## Падіння: невеликий поштовх убік і обертання; `floor_y` — де відскок.
 func fall(floor_y: float) -> void:
+	if _swing_t >= 0.0:
+		_swing_t = -1.0
+		position = base_pos
+		rotation = base_rot
 	_falling = true
 	_wobble_t = -1.0
 	_floor_y = floor_y
@@ -118,6 +128,22 @@ func is_falling() -> bool:
 
 
 func _process(delta: float) -> void:
+	if _swing_t >= 0.0 and not _falling:
+		_swing_t += delta
+		var k := _swing_t / SWING_TIME
+		if k >= 1.0:
+			_swing_t = -1.0
+			position = base_pos
+			rotation = base_rot
+			set_process(false)
+			queue_redraw()
+			return
+		# Від 0 до delta з перескоком, що затухає (маятник).
+		var a := _swing_delta * (1.0 - exp(-4.0 * k) * cos(k * TAU * 2.2)) if k < 0.97 else _swing_delta
+		rotation = _swing_from_rot + a
+		position = _swing_pivot + (_swing_from_pos - _swing_pivot).rotated(a)
+		queue_redraw()
+		return
 	if not _falling:
 		_wobble_t += delta
 		var k := _wobble_t / 0.9

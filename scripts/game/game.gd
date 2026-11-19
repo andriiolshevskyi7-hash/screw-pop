@@ -154,7 +154,10 @@ func _reset() -> void:
 	board = ScrewBoard.from_dict(initial)
 	board_view.build(board)
 	for i in boxes.size():
-		boxes[i].set_box(board.box_color[i])
+		if board.box_color[i] == ScrewBoard.SAFE:
+			boxes[i].set_safe(int(board.safe.color))
+		else:
+			boxes[i].set_box(board.box_color[i])
 	buffer_view.setup(board.buffer.size())
 	_update_texts()
 	_play_intro()
@@ -172,11 +175,6 @@ func _play_intro() -> void:
 		tw.tween_property(v, "position", home, 0.35).set_delay(i * 0.035).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
 		tw.tween_property(v, "modulate:a", 1.0, 0.2).set_delay(i * 0.035)
 		i += 1
-	for cv in board_view.chain_views.values():
-		if not is_instance_valid(cv):
-			continue
-		cv.modulate.a = 0.0
-		cv.create_tween().tween_property(cv, "modulate:a", 1.0, 0.3).set_delay(i * 0.035)
 	for k in boxes.size():
 		boxes[k].scale = Vector2(0.6, 0.6)
 		boxes[k].create_tween().tween_property(boxes[k], "scale", Vector2.ONE, 0.4).set_trans(Tween.TRANS_BACK).set_ease(Tween.EASE_OUT)
@@ -258,15 +256,6 @@ func _on_screw_pressed(s: int) -> void:
 	var sv: ScrewView = board_view.screw_views.get(s)
 	if sv == null:
 		return
-	if board.is_locked(s) and not board.is_covered(s):
-		# Замкнений: трясеться, а його ключ «підстрибує», підказуючи, що відкрутити спершу.
-		sv.shake()
-		Sfx.play("locked")
-		Sfx.vibrate(18)
-		var key: ScrewView = board_view.screw_views.get(board.lock_of[s])
-		if key:
-			key.pop()
-		return
 	if not board.is_free(s):
 		# Накритий пластиною: легке трясіння.
 		sv.shake()
@@ -295,7 +284,8 @@ func _play(ev: Array) -> void:
 		_box_lock += 1
 	var first: Dictionary = ev[0]
 	var s: int = first.s
-	var color := board.color_of(s)
+	# Колір, з яким гвинт відкрутили (хамелеон уже перемкнувся на наступний хід).
+	var color: int = first.color
 	var p: int = board.screws[s].plate
 	var sv: ScrewView = board_view.screw_views[s]
 	var pv: PlateView = board_view.plate_views[p]
@@ -313,27 +303,18 @@ func _play(ev: Array) -> void:
 	var r_from := ScrewBoard.SCREW_R * board_view.board_scale * 1.22
 	sv.queue_free()
 	Sfx.play("pop", randf_range(0.95, 1.1))
-	# Пластини: падають (ланцюгом — разом), скло розбивається, повисла на ланцюгу —
-	# смикається; з одним гвинтом — гойдається на ньому.
+	# Пластина: падає; хитка на останньому гвинті повертається й звисає;
+	# звичайна з одним гвинтом — коротко гойдається на ньому.
 	var structural := false
 	for e in ev:
 		match e.t:
 			"fall":
 				structural = true
-				var fv: PlateView = board_view.plate_views.get(int(e.plate))
-				if fv:
-					_drop_plate(fv)
-			"break":
+				_drop_plate(pv)
+			"swing":
 				structural = true
-				_break_plate(pv)
-			"hold":
-				structural = true
-				pv.wobble(Vector2.ZERO)
-				var cv = board_view.chain_views.get(int(e.plate))
-				if is_instance_valid(cv):
-					cv.rattle()
-				Sfx.play("chain")
-	if not structural and pv.screw_views.size() == 1 and not pv.is_glass:
+				_swing_plate(pv, int(e.pivot))
+	if not structural and pv.screw_views.size() == 1:
 		var last: ScrewView = pv.screw_views.values()[0]
 		pv.wobble(last.position)
 	_refresh_mechanics()
@@ -366,6 +347,10 @@ func _play(ev: Array) -> void:
 					return
 				_box_fx(bx, int(e.color))
 				await bx.close_and_leave()
+			"safe":
+				Sfx.play("safe")
+				Sfx.vibrate(25)
+				await boxes[e.box].open_safe()
 			"arrive":
 				await boxes[e.box].arrive(e.color, e.box == 1)
 				if e.color >= 0:
@@ -422,35 +407,37 @@ func _fly(color: int, from: Vector2, to: Vector2, r_from: float, r_to: float, du
 	f.queue_free()
 
 
-## Замки відкрито / «?» показали колір — звук і перевірка знайомства.
+## Після ходу: хамелеони перемикаються, лічильники бомб зменшуються (на ≤ 3 — «тік»).
 func _refresh_mechanics() -> void:
 	var r := board_view.refresh_states()
-	if r.unlocked > 0:
-		Sfx.play("unlock")
-	if r.revealed > 0:
-		Sfx.play("reveal")
+	if r.flipped > 0:
+		Sfx.play("flip")
+	if r.hot <= 3:
+		Sfx.play("tick")
 
 
-func _break_plate(pv: PlateView) -> void:
-	pv.shatter()
-	Sfx.play("glass")
-	Sfx.vibrate(25)
-	await get_tree().create_timer(0.12).timeout
+## Хитка пластина повертається на гвинті `pivot` і звисає вниз (маятник), потім
+## звільнені гвинти «підстрибують».
+func _swing_plate(pv: PlateView, pivot: int) -> void:
+	var piv: ScrewView = pv.screw_views.get(pivot)
+	if piv == null:
+		return
+	var pose := ScrewBoard.swing_pose(board.plates[pv.index], board.screws[pivot].pos)
+	if pose.is_empty():
+		return
+	pv.swing_to(piv.position, float(pose.delta))
+	Sfx.play("swing")
+	Sfx.vibrate(15)
+	await get_tree().create_timer(PlateView.SWING_TIME * 0.5).timeout
 	if board == null:
 		return
 	for s in board_view.screw_views:
+		# Гвинти, які пластина накривала до повороту і які тепер вільні.
 		if board.is_free(s) and board.covers[s].has(pv.index):
 			board_view.screw_views[s].pop()
-	_refresh_mechanics()
 
 
 func _drop_plate(pv: PlateView) -> void:
-	var cv = board_view.chain_views.get(pv.index)
-	if is_instance_valid(cv):
-		cv.fall()
-		# Ланцюг падає й видаляється — більше на нього не посилаємось.
-		board_view.chain_views.erase(cv.plate_a)
-		board_view.chain_views.erase(cv.plate_b)
 	board_view.plate_views.erase(pv.index)
 	pv.bounced.connect(func() -> void:
 		Sfx.play("thud", randf_range(0.9, 1.1))
@@ -475,6 +462,9 @@ func _after_move() -> void:
 	if board.is_won() and not _won:
 		_won = true
 		_win()
+	elif board.exploded and not _lost:
+		_lost = true
+		_explode()
 	elif board.is_stuck() and not _lost:
 		_lost = true
 		_lose()
@@ -494,6 +484,34 @@ func _win() -> void:
 	level_won.emit(summary)
 
 
+## Бомба вибухнула: спалах, трясіння поля, вікно «+5 ходів» за рекламу.
+func _explode() -> void:
+	Sfx.play("boom")
+	Sfx.vibrate(120)
+	for s in board_view.screw_views:
+		if board.is_bomb(s) and board.bomb_left(s) <= 0:
+			BurstFx.spawn(fly_layer, _to_fly(board_view.screw_global(s)), Color("ff7a1a"), 40)
+	var tw := create_tween()
+	var home := board_view.position
+	for k in 6:
+		tw.tween_property(board_view, "position", home + Vector2(randf_range(-14, 14), randf_range(-10, 10)), 0.04)
+	tw.tween_property(board_view, "position", home, 0.05)
+	await get_tree().create_timer(0.7).timeout
+	if board == null or not _lost:
+		return
+	var choice: String = await lose_popup.ask(continues < Economy.MAX_CONTINUES, "bomb")
+	if choice == "continue":
+		continues += 1
+		board.add_bomb_moves()
+		board_view.refresh_states()
+		_lost = false
+		Sfx.play("arrive")
+	else:
+		if not debug_play:
+			GameState.break_streak()
+		_reset()
+
+
 func _lose() -> void:
 	Sfx.play("error")
 	Sfx.vibrate(60)
@@ -504,13 +522,10 @@ func _lose() -> void:
 	var choice: String = await lose_popup.ask(continues < Economy.MAX_CONTINUES)
 	if choice == "continue":
 		continues += 1
-		var slot := board.add_buffer_slot()
+		board.add_buffer_slot()
 		buffer_view.add_slot()
 		_lost = false
 		Sfx.play("arrive")
-		# Наступний гвинт може летіти в нове гніздо одразу.
-		if slot >= 0 and board.is_stuck():
-			_after_move()
 	else:
 		if not debug_play:
 			GameState.break_streak()
@@ -582,26 +597,29 @@ func _mechanic_targets(id: String) -> Array:
 	if board == null:
 		return out
 	var k := board_view.board_scale
-	var side := ScrewBoard.SCREW_R * 2.6 * k
+	var side := ScrewBoard.SCREW_R * 2.8 * k
 	match id:
-		Mechanics.LOCK, Mechanics.HIDDEN:
+		Mechanics.CHAMELEON, Mechanics.BOMB:
 			for s in board_view.screw_views:
-				var hit := false
-				if id == Mechanics.LOCK:
-					hit = board.is_locked(s) or (board.is_key(s) and not board.removed[s])
-				else:
-					hit = board.is_hidden(s) and board.is_covered(s)
+				var hit := board.is_chameleon(s) if id == Mechanics.CHAMELEON else board.is_bomb(s)
 				if hit:
 					var c := board_view.screw_global(s)
-					out.append(Rect2(c - Vector2(side, side) / 2.0, Vector2(side, side)))
-		Mechanics.GLASS, Mechanics.CHAIN:
+					if id == Mechanics.BOMB:
+						# Разом з лічильником над гвинтом.
+						out.append(Rect2(c - Vector2(side, side * 1.6) / 2.0 - Vector2(0, side * 0.3), Vector2(side, side * 1.6)))
+					else:
+						out.append(Rect2(c - Vector2(side, side) / 2.0, Vector2(side, side)))
+		Mechanics.SWING:
 			for p in board_view.plate_views:
-				var hit := board.glass[p] == 1 if id == Mechanics.GLASS else board.chain_of[p] >= 0
-				if hit and not board.plate_gone[p]:
+				if board.swing[p] and not board.plate_gone[p]:
 					var pl: Dictionary = board.plates[p]
 					var he := LevelGenerator._half_extent(pl.shape, pl.size, pl.rot) * k
 					var c: Vector2 = board_view.plates_root.get_global_transform() * Vector2(pl.pos)
 					out.append(Rect2(c - he, he * 2.0))
+		Mechanics.SAFE:
+			for b in boxes:
+				if b.is_safe():
+					out.append(b.get_global_rect())
 	return out
 
 
