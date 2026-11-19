@@ -35,6 +35,12 @@ var _wobble_pivot := Vector2.ZERO
 var _wobble_amp := 0.0
 
 
+## Godot вмикає `_process` при вході в дерево, якщо він визначений, — вимикаємо,
+## анімації вмикають його самі лише на свій час.
+func _ready() -> void:
+	set_process(false)
+
+
 func setup(p_index: int, plate: Dictionary, p_holes: Array, screw_radius: float) -> void:
 	index = p_index
 	shape = plate.shape

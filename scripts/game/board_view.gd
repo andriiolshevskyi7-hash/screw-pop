@@ -18,6 +18,8 @@ var screw_views := {}
 ## Ланцюги: номер пластини → ChainView (обидві пластини пари вказують на той самий).
 var chain_views := {}
 var board_scale := 1.0
+## Значки «?» поверх пластин над накритими прихованими гвинтами.
+var _marks: Node2D
 
 
 func _ready() -> void:
@@ -71,8 +73,24 @@ func build(p_board: ScrewBoard) -> void:
 			plates_root.add_child(cv)
 			chain_views[p] = cv
 			chain_views[q] = cv
+	_marks = Node2D.new()
+	_marks.draw.connect(_draw_marks)
+	plates_root.add_child(_marks)
 	refresh_states(false)
 	_fit()
+
+
+## «?» видно крізь пластину: гравець знає, що під нею схований гвинт, але не його колір.
+func _draw_marks() -> void:
+	if board == null:
+		return
+	var r := ScrewBoard.SCREW_R * 0.55
+	for s in screw_views:
+		if screw_views[s].masked:
+			var c: Vector2 = board.screws[s].pos
+			_marks.draw_circle(c + Vector2(0, 2), r, Color(0.02, 0.08, 0.2, 0.25))
+			_marks.draw_circle(c, r, Color(1, 1, 1, 0.85))
+			ScrewPainter.draw_question(_marks, c, r, UiTheme.NAVY)
 
 
 ## Оновлює замки й «?» за станом поля (`animate` — з анімацією відкриття).
@@ -94,6 +112,8 @@ func refresh_states(animate: bool = true) -> Dictionary:
 			out.revealed += 1
 		sv.masked = masked
 		sv.queue_redraw()
+	if is_instance_valid(_marks):
+		_marks.queue_redraw()
 	return out
 
 

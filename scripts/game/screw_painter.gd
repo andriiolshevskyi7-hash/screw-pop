@@ -232,12 +232,16 @@ static func draw_hidden(ci: CanvasItem, c: Vector2, r: float, lift: float = 0.0)
 	ci.draw_circle(c, r, col.darkened(0.3))
 	ci.draw_circle(c - Vector2(0, r * 0.07), r * 0.86, col)
 	ci.draw_colored_polygon(_ellipse(c + Vector2(0, -r * 0.36), r * 0.6, r * 0.32, 0.0), Color(col.lightened(0.35), 0.8))
+	draw_question(ci, c, r, Color.WHITE)
+
+
+## Знак «?» по центру кола радіуса `r`.
+static func draw_question(ci: CanvasItem, c: Vector2, r: float, color: Color) -> void:
 	if _q_font == null:
 		_q_font = UiTheme.font(900)
-	var font := _q_font
 	var fs := int(r * 1.2)
-	var w := font.get_string_size("?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
-	ci.draw_string(font, c + Vector2(-w / 2.0, r * 0.42), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, Color.WHITE)
+	var w := _q_font.get_string_size("?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs).x
+	ci.draw_string(_q_font, c + Vector2(-w / 2.0, r * 0.42), "?", HORIZONTAL_ALIGNMENT_LEFT, -1, fs, color)
 
 
 ## Скляна пластина: прозоре блакитне скло з білими відблисками.

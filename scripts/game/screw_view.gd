@@ -23,6 +23,12 @@ var _shake_dir := Vector2.RIGHT
 var _tween: Tween
 
 
+## Godot вмикає `_process` при вході в дерево, якщо він визначений, — вимикаємо,
+## анімації вмикають його самі лише на свій час.
+func _ready() -> void:
+	set_process(false)
+
+
 func setup(p_index: int, p_color: int, p_radius: float) -> void:
 	index = p_index
 	color_index = p_color

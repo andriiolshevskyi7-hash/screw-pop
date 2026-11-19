@@ -16,6 +16,12 @@ var _t := 0.0
 var _tween: Tween
 
 
+## Godot вмикає `_process` при вході в дерево, якщо він визначений, — вимикаємо,
+## анімації вмикають його самі лише на свій час.
+func _ready() -> void:
+	set_process(false)
+
+
 func setup(a: int, b: int, seg: Array) -> void:
 	plate_a = a
 	plate_b = b
