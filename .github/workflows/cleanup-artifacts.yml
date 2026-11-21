@@ -1,0 +1,55 @@
+name: Cleanup artifacts
+
+# Видаляє всі артефакти, крім найновішого release AAB і найновішого debug APK,
+# щоб не переповнювати сховище GitHub Actions (0,5 ГБ на безкоштовному плані).
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "17 3 * * *"   # щодня о 03:17 UTC
+  # Разовий запуск, коли змінюється сам цей файл (у т.ч. при першому push).
+  push:
+    paths:
+      - .github/workflows/cleanup-artifacts.yml
+
+permissions:
+  actions: write
+
+concurrency:
+  group: cleanup-artifacts
+  cancel-in-progress: false
+
+jobs:
+  cleanup:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete old artifacts
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          # id, назва, дата створення, розмір — від найновішого до найстарішого.
+          gh api --paginate "repos/$REPO/actions/artifacts?per_page=100" \
+            --jq '.artifacts[] | select(.expired | not) | [.id, .name, .created_at, .size_in_bytes] | @tsv' \
+            | sort -t $'\t' -k3,3r > artifacts.tsv
+
+          echo "Артефактів зараз: $(wc -l < artifacts.tsv)"
+          # Найновіший AAB (назва містить "aab") і найновіший APK (містить "apk", але не "aab").
+          KEEP_AAB=$(awk -F'\t' 'tolower($2) ~ /aab/ {print $1; exit}' artifacts.tsv)
+          KEEP_APK=$(awk -F'\t' 'tolower($2) ~ /apk/ && tolower($2) !~ /aab/ {print $1; exit}' artifacts.tsv)
+
+          KEPT=0; DELETED=0; FREED=0
+          while IFS=$'\t' read -r ID NAME CREATED SIZE; do
+            if [ "$ID" = "$KEEP_AAB" ] || [ "$ID" = "$KEEP_APK" ]; then
+              echo "keep   $NAME ($CREATED, $SIZE B)"; KEPT=$((KEPT+1)); continue
+            fi
+            if gh api -X DELETE "repos/$REPO/actions/artifacts/$ID" > /dev/null; then
+              echo "delete $NAME ($CREATED, $SIZE B)"; DELETED=$((DELETED+1)); FREED=$((FREED+SIZE))
+            else
+              echo "::warning::Не вдалося видалити $NAME ($ID)"
+            fi
+          done < artifacts.tsv
+
+          SUMMARY="Залишено: $KEPT, видалено: $DELETED, звільнено: $((FREED/1024/1024)) МБ"
+          echo "$SUMMARY"
+          echo "### $SUMMARY" >> "$GITHUB_STEP_SUMMARY"
